@@ -2,8 +2,6 @@ local callbacks = require("@self/callbacks")
 local schema = require("@self/schema")
 local store = require("@self/store")
 
---what
-
 export type Schema<T> = schema.Schema<T>
 export type Store<T> = store.Store<T>
 
@@ -16,6 +14,7 @@ return table.freeze({
 	store = store.create,
 	startsession = store.startsession,
 	waitforsession = store.waitforsession,
+	issessionactive = store.issessionactive,
 	stopsessionasync = store.stopsessionasync,
 	view = store.view,
 	update = store.update,
