@@ -544,8 +544,7 @@ local function waitforsession<T>(store: Store<T>, key: string)
 end
 
 local function issessionactive<T>(store: Store<T>, key: string)
-    assert(store.session.state[key], `sync not started for key "{key}"`)
-    return (store.session.state[key] == "active")
+    return (store.session.state[key] ~= nil)
 end
 
 --- Stops real-time sync for a given key.
