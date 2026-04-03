@@ -543,6 +543,11 @@ local function waitforsession<T>(store: Store<T>, key: string)
 	coroutine.yield()
 end
 
+
+local function issessionactive<T>(store: Store<T>, key: string)
+    return store.session.state[key] ~= nil
+end
+
 --- Stops real-time sync for a given key.
 local function stopsessionasync<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
@@ -761,6 +766,7 @@ return table.freeze({
 	create = create,
 	startsession = startsession,
 	waitforsession = waitforsession,
+    issessionactive = issessionactive,
 	stopsessionasync = stopsessionasync,
 	view = view,
 	update = update,
