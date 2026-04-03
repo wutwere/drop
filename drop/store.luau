@@ -545,7 +545,7 @@ end
 
 
 local function issessionactive<T>(store: Store<T>, key: string)
-    return (store.session.state[key] ~= nil)
+    return store.session.state[key] ~= nil
 end
 
 --- Stops real-time sync for a given key.
