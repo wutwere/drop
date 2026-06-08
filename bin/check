@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "${1:-}" = "--help" ]; then
+	printf 'Usage: %s [project ...]\n' "$0"
+	exit 0
+fi
+
+if "$script_dir/_lsp-analyze" "$@" && "$script_dir/_format" "$@"; then
+	printf 'CHECK PASS\n'
+else
+	printf 'CHECK FAIL\n' >&2
+	exit 1
+fi

@@ -1,0 +1,5 @@
+call_parentheses = "NoSingleTable"
+syntax = "Luau"
+
+[sort_requires]
+enabled = true

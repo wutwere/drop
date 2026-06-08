@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/_ci.sh
+source "$script_dir/_ci.sh"
+
+while read -r project; do
+	(
+		log_dir="$(mktemp -d)"
+		trap 'rm -rf "$log_dir"' EXIT
+		run_quiet_step "$project" "stylua" "$log_dir/stylua.output" \
+			stylua --check --respect-ignores "$project/src"
+	)
+done < <(resolve_projects "$@")

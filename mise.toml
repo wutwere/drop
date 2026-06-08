@@ -1,0 +1,8 @@
+[tools]
+"aqua:Kampfkarren/selene" = "latest"
+"aqua:JohnnyMorganz/StyLua" = "latest"
+"aqua:luau-lang/luau" = "latest"
+"github:JohnnyMorganz/luau-lsp" = "latest"
+"github:rojo-rbx/rojo" = "latest"
+"github:UpliftGames/wally" = "latest"
+"github:JohnnyMorganz/wally-package-types" = "latest"

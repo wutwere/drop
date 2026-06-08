@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/_ci.sh
+source "$script_dir/_ci.sh"
+
+is_ignored_synthetic_diagnostic() {
+	local line="$1"
+	[[ "$line" =~ ^[./]+\([0-9]+,[0-9]+\):\ [A-Za-z]+Error: ]]
+}
+
+is_relevant_analyze_error() {
+	local line="$1"
+	[[ "$line" =~ :[[:space:]]*[A-Za-z]+Error: ]] || [[ "$line" =~ ^error: ]] || [[ "$line" =~ \[ERROR\] ]]
+}
+
+run_analyze() {
+	local project="$1"
+	local output_path="$2"
+	shift
+	shift
+
+	local analyze_exit=0
+	local ignored_count=0
+	local has_relevant_error=false
+	local printed_line_count=0
+	local line
+
+	print_step "$project" "luau analyze"
+
+	if is_verbose; then
+		"$@"
+		return 0
+	fi
+
+	set +e
+	"$@" >"$output_path" 2>&1
+	analyze_exit=$?
+	set -e
+
+	while IFS= read -r line; do
+		if is_ignored_synthetic_diagnostic "$line"; then
+			ignored_count=$((ignored_count + 1))
+			continue
+		fi
+
+		if [[ "$line" =~ ^\[INFO\]\ Loading\ definitions\ file: ]] || [[ "$line" =~ ^\[INFO\]\ Loading\ Luau\ configuration\ from\  ]]; then
+			continue
+		fi
+
+		printf '%s\n' "$line"
+		printed_line_count=$((printed_line_count + 1))
+
+		if is_relevant_analyze_error "$line"; then
+			has_relevant_error=true
+		fi
+	done < "$output_path"
+
+	if [ "$ignored_count" -gt 0 ]; then
+		printf '[%s] ignored %d synthetic package diagnostics\n' "$project" "$ignored_count"
+	fi
+
+	if [ "$has_relevant_error" = true ]; then
+		printf '[%s] luau analyze failed\n' "$project" >&2
+		return 1
+	fi
+
+	if [ "$analyze_exit" -ne 0 ] && [ "$ignored_count" -eq 0 ] && [ "$printed_line_count" -eq 0 ]; then
+		return "$analyze_exit"
+	fi
+
+	return 0
+}
+
+run_project() {
+	(
+		local project="$1"
+		local solver
+		local solver_flag=false
+		local temp_dir
+		local sourcemap_path
+		local definitions_path
+		local analyze_output_path
+		local install_output_path
+		local sourcemap_output_path
+		local package_types_output_path
+		local definitions_output_path
+		local package_dir
+
+		solver="v2"
+		if [ "$solver" = "v2" ]; then
+			solver_flag=true
+		fi
+
+		temp_dir="$(mktemp -d)"
+		trap 'rm -rf "$temp_dir"' EXIT
+		sourcemap_path="$temp_dir/$project.sourcemap.json"
+		definitions_path="$temp_dir/roblox.d.luau"
+		analyze_output_path="$temp_dir/analyze.output"
+		install_output_path="$temp_dir/wally-install.output"
+		sourcemap_output_path="$temp_dir/sourcemap.output"
+		package_types_output_path="$temp_dir/package-types.output"
+		definitions_output_path="$temp_dir/definitions.output"
+
+		run_quiet_step "$project" "rojo sourcemap" "$sourcemap_output_path" \
+			rojo sourcemap --absolute --output="$sourcemap_path" "$project/default.project.json"
+
+		run_quiet_step "$project" "download roblox definitions" "$definitions_output_path" \
+			download_roblox_definitions "$definitions_path"
+
+		run_analyze "$project" "$analyze_output_path" \
+			luau-lsp analyze \
+			--sourcemap="$sourcemap_path" \
+			--ignore=**/Packages/_Index/** \
+			--ignore=**/ServerPackages/_Index/** \
+			--ignore=**/ClientNet.luau \
+			--ignore=**/ServerNet.luau \
+			--definitions="$definitions_path" \
+			--flag:LuauSolverV2="$solver_flag" \
+			"$project/src"
+	)
+}
+
+run_project "."
