@@ -81,6 +81,51 @@ return function(ctx)
 		drop.stopsessionasync(store, "player")
 	end)
 
+	TEST("update errors until the session becomes active", function()
+		local service = drop.mockdatastoreservice.new()
+		drop.mockdatastoreservice.queueerror(service, "GetAsync", "forced get failure", 4)
+
+		local preload = drop.store {
+			name = "session-update-active",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(preload, "player", function()
+			return { coins = 9 }
+		end)
+
+		local store = drop.store {
+			name = "session-update-active",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.01,
+		}
+
+		drop.startsession(store, "player")
+		task.wait(0.02)
+
+		local success, err = pcall(function()
+			drop.update(store, "player", function(data)
+				return { coins = data.coins + 1 }
+			end)
+		end)
+
+		CASE("update rejects writes before the first successful load")
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "sync not active", 1, true) ~= nil)
+
+		drop.waitforsession(store, "player")
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 1 }
+		end)
+
+		CASE("update works once the session is active")
+		CHECK(deq(drop.view(store, "player"), { coins = 10 }))
+
+		drop.stopsessionasync(store, "player")
+	end)
+
 	TEST("observe fires for the initial load and later updates", function()
 		local service = drop.mockdatastoreservice.new()
 		local preload = drop.store {

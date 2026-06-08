@@ -620,8 +620,8 @@ end
 ---
 --- If sync is not active for the given key, this errors.
 local function update<T>(store: Store<T>, key: string, fn: (T) -> T)
-	if not store.session.state[key] then
-		error(`sync not started for key "{key}"`)
+	if store.session.state[key] ~= "active" then
+		error(`sync not active for key "{key}"`)
 	end
 
 	local success, result = utils.externcall(fn, store.session.cache[key])
