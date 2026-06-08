@@ -577,6 +577,10 @@ local function waitforsession<T>(store: Store<T>, key: string)
 
 	table.insert(store.session.waiting[key], coroutine.running())
 	coroutine.yield()
+
+	if store.session.state[key] ~= "active" then
+		error(`sync not active for key "{key}"`)
+	end
 end
 
 local function issessionactive<T>(store: Store<T>, key: string)
@@ -591,6 +595,7 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 
 	store.session.state[key] = nil
 	store.session.loop[key] = nil
+	resumewaiters(store, key)
 	store.session.cache[key] = nil
 
 	while store.session.queue[key] do
@@ -656,6 +661,10 @@ local function viewasync<T>(store: Store<T>, key: string): T
 	end
 
 	local record = unwraprecord(store, record)
+	if record.tx then
+		record = resolvetxasync(store, key, record)
+	end
+
 	local record = migraterecord(store, key, record)
 
 	if record == nil then

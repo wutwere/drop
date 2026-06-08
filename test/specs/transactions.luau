@@ -252,8 +252,7 @@ return function(ctx)
 
 		CASE("cross-server transfers conserve total currency")
 		CHECK(
-			#failures == 0
-				or table.concat(failures, "\n"):find("txphase1 failed to prepare all keys", 1, true) ~= nil
+			#failures == 0 or table.concat(failures, "\n"):find("txphase1 failed to prepare all keys", 1, true) ~= nil
 		)
 		CHECK(alice.coins >= 0)
 		CHECK(bob.coins >= 0)

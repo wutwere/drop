@@ -6,6 +6,7 @@ local TEST, CASE, CHECK, FINISH = testkit.test()
 local specs = {
 	require(script.Parent.specs.mockdatastoreservice),
 	require(script.Parent.specs.sessions),
+	require(script.Parent.specs.hardening),
 	require(script.Parent.specs.transactions),
 }
 

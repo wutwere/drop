@@ -80,4 +80,81 @@ return function(ctx)
 
 		drop.stopsessionasync(store, "player")
 	end)
+
+	TEST("observe fires for the initial load and later updates", function()
+		local service = drop.mockdatastoreservice.new()
+		local preload = drop.store {
+			name = "session-observe",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(preload, "player", function()
+			return { coins = 5 }
+		end)
+
+		local store = drop.store {
+			name = "session-observe",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.01,
+		}
+
+		local seen = {}
+		drop.observe(store, function(key, data)
+			table.insert(seen, { key = key, data = data })
+		end)
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+		task.wait()
+
+		CASE("observe receives the initial loaded data")
+		CHECK(#seen >= 1)
+		CHECK(seen[1].key == "player")
+		CHECK(deq(seen[1].data, { coins = 5 }))
+
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 10 }
+		end)
+		task.wait()
+
+		CASE("observe receives later session updates too")
+		CHECK(#seen >= 2)
+		CHECK(deq(seen[#seen].data, { coins = 15 }))
+
+		drop.stopsessionasync(store, "player")
+	end)
+
+	TEST("stopsessionasync flushes queued session updates before returning", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-stop-flush",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 60,
+		}
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 25 }
+		end)
+
+		CASE("session cache updates immediately before stop")
+		CHECK(deq(drop.view(store, "player"), { coins = 25 }))
+
+		drop.stopsessionasync(store, "player")
+
+		CASE("stopsessionasync persists queued writes")
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 25 }))
+
+		CASE("view no longer works after the session stops")
+		local success, err = pcall(function()
+			drop.view(store, "player")
+		end)
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "no cached data", 1, true) ~= nil)
+	end)
 end
