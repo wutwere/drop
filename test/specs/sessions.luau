@@ -5,9 +5,9 @@ return function(ctx)
 	local CHECK = ctx.CHECK
 	local deq = ctx.deq
 
-	TEST("session falls back to schema data then recovers", function()
+	TEST("waitforsession blocks until a real load succeeds", function()
 		local service = drop.mockdatastoreservice.new()
-		drop.mockdatastoreservice.queueerror(service, "GetAsync", "forced get failure", 2)
+		drop.mockdatastoreservice.queueerror(service, "GetAsync", "forced get failure", 4)
 
 		local preload = drop.store {
 			name = "session-fallback",
@@ -26,23 +26,33 @@ return function(ctx)
 			sessiontime = 0.01,
 		}
 
-		drop.startsession(store, "player")
-		drop.waitforsession(store, "player")
+		local loaded = false
+		task.defer(function()
+			drop.waitforsession(store, "player")
+			loaded = true
+		end)
 
-		CASE("waitforsession can resume on fallback data")
-		CHECK(deq(drop.view(store, "player"), { coins = 0 }))
+		drop.startsession(store, "player")
+
+		task.wait(0.02)
+
+		CASE("waitforsession stays blocked while reads are still failing")
+		CHECK(loaded == false)
+		CHECK(drop.issessionactive(store, "player") == false)
 
 		task.wait(0.05)
 
-		CASE("background retries eventually replace fallback with datastore data")
+		CASE("session becomes active once the real data loads")
+		CHECK(loaded == true)
 		CHECK(deq(drop.view(store, "player"), { coins = 99 }))
+		CHECK(drop.issessionactive(store, "player") == true)
 
 		drop.stopsessionasync(store, "player")
 	end)
 
-	TEST("issessionactive does not imply the first read succeeded", function()
+	TEST("issessionactive stays false until the first read succeeds", function()
 		local service = drop.mockdatastoreservice.new()
-		drop.mockdatastoreservice.queueerror(service, "GetAsync", "forced get failure", 2)
+		drop.mockdatastoreservice.queueerror(service, "GetAsync", "forced get failure", 4)
 
 		local store = drop.store {
 			name = "session-status",
@@ -51,12 +61,22 @@ return function(ctx)
 			sessiontime = 0.01,
 		}
 
+		drop.updateasync(store, "player", function()
+			return { coins = 42 }
+		end)
+
 		drop.startsession(store, "player")
+
+		task.wait(0.02)
+
+		CASE("session is not active while startup reads are still failing")
+		CHECK(drop.issessionactive(store, "player") == false)
+
 		drop.waitforsession(store, "player")
 
-		CASE("session reports active even while only fallback data is available")
+		CASE("session becomes active after a successful load")
 		CHECK(drop.issessionactive(store, "player") == true)
-		CHECK(deq(drop.view(store, "player"), { coins = 0 }))
+		CHECK(deq(drop.view(store, "player"), { coins = 42 }))
 
 		drop.stopsessionasync(store, "player")
 	end)

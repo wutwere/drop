@@ -291,9 +291,6 @@ local function rtasync<T>(store: Store<T>, key: string)
 				store.session.state[key] = "active"
 				refresh(store, key, data)
 				resumewaiters(store, key)
-			elseif not store.session.cache[key] then
-				refresh(store, key, store.schema.initial)
-				resumewaiters(store, key)
 			end
 		elseif store.session.queue[key] then
 			local record = flushasync(store, key)
@@ -559,7 +556,7 @@ local function waitforsession<T>(store: Store<T>, key: string)
 end
 
 local function issessionactive<T>(store: Store<T>, key: string)
-	return store.session.state[key] ~= nil
+	return store.session.state[key] == "active"
 end
 
 --- Stops real-time sync for a given key.
