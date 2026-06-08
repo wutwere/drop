@@ -2,11 +2,6 @@ local callbacks = require("./callbacks")
 
 local DataStoreService = game:GetService("DataStoreService")
 
-local GetAsync = DataStoreService:GetDataStore("_").GetAsync
-local SetAsync = DataStoreService:GetDataStore("_").SetAsync
-local UpdateAsync = DataStoreService:GetDataStore("_").UpdateAsync
-local RemoveAsync = DataStoreService:GetDataStore("_").RemoveAsync
-
 local GetOpts = Instance.new("DataStoreGetOptions")
 GetOpts.UseCache = false
 
@@ -23,13 +18,13 @@ local function getasync(datastore: DataStore, key: string): (boolean, any)
 		return true, result
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "GetAsync",
 		datastore = datastore,
 		key = key,
 		retry = true,
-	})
+	}
 
 	local success, result = pcall(function()
 		return datastore:GetAsync(key, GetOpts)
@@ -38,13 +33,13 @@ local function getasync(datastore: DataStore, key: string): (boolean, any)
 		return true, result
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "GetAsync",
 		datastore = datastore,
 		key = key,
 		retry = false,
-	})
+	}
 
 	return false
 end
@@ -57,13 +52,13 @@ local function setasync(datastore: DataStore, key: string, value: any): boolean
 		return true
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "SetAsync",
 		datastore = datastore,
 		key = key,
 		retry = true,
-	})
+	}
 
 	local success, result = pcall(function()
 		return datastore:SetAsync(key, value)
@@ -72,18 +67,22 @@ local function setasync(datastore: DataStore, key: string, value: any): boolean
 		return true
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "SetAsync",
 		datastore = datastore,
 		key = key,
 		retry = false,
-	})
+	}
 
 	return false
 end
 
-local function updateasync(datastore: DataStore, key: string, transform: (any, DataStoreKeyInfo) -> any): (boolean, any, DataStoreKeyInfo)
+local function updateasync(
+	datastore: DataStore,
+	key: string,
+	transform: (any, DataStoreKeyInfo) -> any
+): (boolean, any, DataStoreKeyInfo)
 	local success, result, info = pcall(function()
 		return datastore:UpdateAsync(key, transform)
 	end)
@@ -91,13 +90,13 @@ local function updateasync(datastore: DataStore, key: string, transform: (any, D
 		return true, result, info
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "UpdateAsync",
 		datastore = datastore,
 		key = key,
 		retry = true,
-	})
+	}
 
 	local success, result, info = pcall(function()
 		return datastore:UpdateAsync(key, transform)
@@ -106,13 +105,13 @@ local function updateasync(datastore: DataStore, key: string, transform: (any, D
 		return true, result, info
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "UpdateAsync",
 		datastore = datastore,
 		key = key,
 		retry = false,
-	})
+	}
 
 	return false
 end
@@ -125,13 +124,13 @@ local function removeasync(datastore: DataStore, key: string): boolean
 		return true
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "RemoveAsync",
 		datastore = datastore,
 		key = key,
 		retry = true,
-	})
+	}
 
 	local success, result = pcall(function()
 		return datastore:RemoveAsync(key)
@@ -140,21 +139,21 @@ local function removeasync(datastore: DataStore, key: string): boolean
 		return true
 	end
 
-	callbacks.apierror({
+	callbacks.apierror {
 		msg = result,
 		op = "RemoveAsync",
 		datastore = datastore,
 		key = key,
 		retry = false,
-	})
+	}
 
 	return false
 end
 
-return table.freeze({
+return table.freeze {
 	getdatastore = getdatastore,
 	getasync = getasync,
 	setasync = setasync,
 	updateasync = updateasync,
 	removeasync = removeasync,
-})
+}

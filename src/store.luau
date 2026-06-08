@@ -1,9 +1,9 @@
-local callbacks = require("./callbacks")
-local schema = require("./schema")
 local MockDataStoreService = require("./mockdatastoreservice")
+local callbacks = require("./callbacks")
 local rbxapi = require("./rbxapi")
-local utils = require("./utils")
+local schema = require("./schema")
 local tx = require("./tx")
+local utils = require("./utils")
 
 export type Store<T> = {
 	read service: any,
@@ -47,7 +47,7 @@ local function unwraprecord<T>(store: Store<T>, record: Record?): Record
 	return record
 end
 
---- Migrations a record to the latest schema version, returning nil if a 
+--- Migrations a record to the latest schema version, returning nil if a
 --- migration failed.
 local function migraterecord<T>(store: Store<T>, key: string, record: Record): Record?
 	local schema = store.schema
@@ -60,11 +60,11 @@ local function migraterecord<T>(store: Store<T>, key: string, record: Record): R
 		local success, result = utils.externcall(migration, data)
 
 		if not success then
-			callbacks.migrationerror({
+			callbacks.migrationerror {
 				migration = migration,
 				store = store.source.Name,
 				key = key,
-			})
+			}
 
 			return nil
 		end
@@ -79,11 +79,11 @@ local function migraterecord<T>(store: Store<T>, key: string, record: Record): R
 end
 
 --- Applies a queue of functions to the given data.
---- 
+---
 --- Each function is called with a deep-frozen copy of the data, and if it
 --- returns successfully, the returned value is used as the new data for the
 --- next function in the queue.
---- 
+---
 --- If a function errors, its result is ignored and the data remains unchanged
 --- for the next function.
 local function applyqueue<T>(data: T, queue: { (T) -> T }): T
@@ -107,7 +107,7 @@ end
 
 --- Refreshes the cached data for a given key, applying any queued updates
 --- before notifying observers.
---- 
+---
 --- If sync is not active for the given key, this is a no-op.
 local function refresh<T>(store: Store<T>, key: string, data: T)
 	if not store.session.state[key] then
@@ -139,6 +139,19 @@ local function releaselock<T>(store: Store<T>, key: string)
 	store.lock[key] = nil
 end
 
+local function resumewaiters<T>(store: Store<T>, key: string)
+	local waiting = store.session.waiting[key]
+	if waiting == nil then
+		return
+	end
+
+	for _, thread in waiting do
+		task.defer(thread)
+	end
+
+	store.session.waiting[key] = nil
+end
+
 local function getsharedtxsource(fns: { [Store<any>]: { [string]: (any) -> any } }): DataStore
 	local firststore = next(fns)
 	assert(firststore ~= nil, "transaction must include at least one update")
@@ -146,10 +159,10 @@ local function getsharedtxsource(fns: { [Store<any>]: { [string]: (any) -> any }
 end
 
 --- Resolves the transaction on the given record, returning the updated record.
---- 
+---
 --- If `tx.resolveasync` is unable to resolve the transaction, the original
 --- record is returned.
---- 
+---
 --- If `tx.resolveasync` is able to resolve the transaction, the record is
 --- updated accordingly, and the transaction is adopted.
 local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): Record
@@ -209,7 +222,7 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 end
 
 --- Flushes the queued updates for a given key to the datastore.
---- 
+---
 --- Returns the updated record on success, or nil on failure.
 local function flushasync<T>(store: Store<T>, key: string): Record?
 	acquirelockasync(store, key)
@@ -277,20 +290,10 @@ local function rtasync<T>(store: Store<T>, key: string)
 			if data then
 				store.session.state[key] = "active"
 				refresh(store, key, data)
-
-				for _, thread in store.session.waiting[key] do
-					task.defer(thread)
-				end
-
-				store.session.waiting[key] = nil
+				resumewaiters(store, key)
 			elseif not store.session.cache[key] then
 				refresh(store, key, store.schema.initial)
-
-				for _, thread in store.session.waiting[key] do
-					task.defer(thread)
-				end
-
-				store.session.waiting[key] = nil
+				resumewaiters(store, key)
 			end
 		elseif store.session.queue[key] then
 			local record = flushasync(store, key)
@@ -307,12 +310,12 @@ local function rtasync<T>(store: Store<T>, key: string)
 		end
 
 		task.wait(store.session.time)
-	end 
+	end
 end
 
 --- Prepares the transaction by applying all update functions in the first
 --- phase.
---- 
+---
 --- Returns true if all updates were prepared successfully, or false if any
 --- update failed to prepare.
 local function txprepareasync(fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string): boolean
@@ -329,7 +332,7 @@ local function txprepareasync(fns: { [Store<any>]: { [string]: (any) -> any } },
 					if record.tx then
 						return nil
 					end
-					
+
 					local record = migraterecord(store, key, record)
 					if record == nil then
 						error("migration failed")
@@ -358,7 +361,7 @@ local function txprepareasync(fns: { [Store<any>]: { [string]: (any) -> any } },
 					if thread then
 						coroutine.resume(thread, false)
 					end
-				elseif  thread then
+				elseif thread then
 					refresh(store, key, record.data)
 					coroutine.resume(thread, true)
 				end
@@ -401,7 +404,7 @@ local function txcommitasync(fns: { [Store<any>]: { [string]: (any) -> any } }, 
 				if success then
 					refresh(store, key, record.data)
 				end
-	
+
 				coroutine.resume(thread, success)
 			end, store, key, txid, thread)
 		end
@@ -468,7 +471,7 @@ local function txabortasync(fns: { [Store<any>]: { [string]: (any) -> any } }, t
 end
 
 --- Executes phase 2 of the transaction.
---- 
+---
 --- This attempts to commit the transaction, and if successful, commits all
 --- updates. If the commit fails, it aborts the transaction instead.
 local function txphase2(thread: thread, fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string)
@@ -484,7 +487,7 @@ local function txphase2(thread: thread, fns: { [Store<any>]: { [string]: (any) -
 end
 
 --- Executes phase 1 of the transaction.
---- 
+---
 --- This attempts to prepare all updates, and if successful, moves on to phase
 --- 2. If any update fails to prepare, it aborts the transaction instead.
 local function txphase1(thread: thread, fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string)
@@ -499,7 +502,7 @@ local function txphase1(thread: thread, fns: { [Store<any>]: { [string]: (any) -
 end
 
 --- Executes phase 0 of the transaction.
---- 
+---
 --- This acquires all necessary locks and creates the transaction, then moves on
 --- to phase 1. If the transaction cannot be created, it releases all locks and
 --- aborts.
@@ -547,7 +550,7 @@ end
 local function waitforsession<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
 		error(`sync not started for key "{key}"`)
-	elseif store.session.state[key] == "active" then
+	elseif store.session.state[key] == "active" or store.session.waiting[key] == nil then
 		return
 	end
 
@@ -555,9 +558,8 @@ local function waitforsession<T>(store: Store<T>, key: string)
 	coroutine.yield()
 end
 
-
 local function issessionactive<T>(store: Store<T>, key: string)
-    return store.session.state[key] ~= nil
+	return store.session.state[key] ~= nil
 end
 
 --- Stops real-time sync for a given key.
@@ -576,7 +578,7 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 end
 
 --- Views the cached data for a given key.
---- 
+---
 --- If sync is not active for the given key, this errors.
 local function view<T>(store: Store<T>, key: string): T
 	local data = store.session.cache[key]
@@ -589,7 +591,7 @@ local function view<T>(store: Store<T>, key: string): T
 end
 
 --- Queues an update function for a given key.
---- 
+---
 --- If sync is not active for the given key, this errors.
 local function update<T>(store: Store<T>, key: string, fn: (T) -> T)
 	if not store.session.state[key] then
@@ -614,7 +616,7 @@ local function update<T>(store: Store<T>, key: string, fn: (T) -> T)
 end
 
 --- Observes updates to the store.
---- 
+---
 --- The provided function is called with the key and updated data whenever an
 --- update occurs. Data might be different or the same as the previous update.
 local function observe<T>(store: Store<T>, fn: (key: string, data: T) -> ())
@@ -622,9 +624,9 @@ local function observe<T>(store: Store<T>, fn: (key: string, data: T) -> ())
 end
 
 --- Views the data for a given key directly from the datastore.
---- 
+---
 --- This bypasses any real-time sync and cache.
---- 
+---
 --- This function will error if the read fails.
 local function viewasync<T>(store: Store<T>, key: string): T
 	local success, record: Record = rbxapi.getasync(store.source, key)
@@ -645,9 +647,9 @@ local function viewasync<T>(store: Store<T>, key: string): T
 end
 
 --- Updates the data for a given key directly in the datastore.
---- 
+---
 --- This bypasses any real-time sync and cache.
---- 
+---
 --- This function will error if the update fails.
 local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 	local function apply<T>(store: Store<T>, key: string, fn: (T) -> T): Record?
@@ -659,7 +661,7 @@ local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 			if record.tx then
 				return nil
 			end
-			
+
 			local record = migraterecord(store, key, record)
 			if record == nil then
 				error("migration failed")
@@ -679,7 +681,7 @@ local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 		end)
 
 		releaselock(store, key)
-		
+
 		if not success then
 			return nil
 		else
@@ -711,12 +713,12 @@ local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 end
 
 --- Executes a transaction with multiple updates.
---- 
+---
 --- The provided function is called with a transaction function that can be
 --- used to queue updates on multiple stores and keys. The transaction will
 --- attempt to apply all updates atomically, and will error if any update
 --- fails.
---- 
+---
 --- If the transaction is successful, all updates will be committed. If any
 --- update fails, all updates will be reverted.
 local function txasync<T>(fn: (tx: <T>(store: Store<T>, key: string, fn: (T) -> T) -> ()) -> ())
@@ -798,11 +800,11 @@ local function create<T>(opts: {
 	return store
 end
 
-return table.freeze({
+return table.freeze {
 	create = create,
 	startsession = startsession,
 	waitforsession = waitforsession,
-    issessionactive = issessionactive,
+	issessionactive = issessionactive,
 	stopsessionasync = stopsessionasync,
 	view = view,
 	update = update,
@@ -810,4 +812,4 @@ return table.freeze({
 	viewasync = viewasync,
 	updateasync = updateasync,
 	txasync = txasync,
-})
+}

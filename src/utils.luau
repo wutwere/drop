@@ -15,17 +15,15 @@ local function deepfreeze<T>(tbl: T): T
 end
 
 local function externcall<Arg, Ret>(fn: (Arg) -> Ret, arg: Arg): (boolean, Ret)
-	return xpcall(function(fn: (any) -> any, arg: any)
-		for ret in fn, arg do
-			return ret
-		end
+	return xpcall(function(): Ret
+		return fn(arg)
 	end, function(err)
 		callbacks.externerror(err)
 		return err
 	end, fn, arg)
 end
 
-return table.freeze({
+return table.freeze {
 	deepfreeze = deepfreeze,
 	externcall = externcall,
-})
+}

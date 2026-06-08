@@ -43,6 +43,12 @@ return function(ctx)
 			return { coins = 7 }
 		end)
 
+		local externerrors = {}
+		local oldexternerror = drop.callbacks.externerror
+		drop.callbacks.externerror = function(err)
+			table.insert(externerrors, tostring(err))
+		end
+
 		local success, err = pcall(function()
 			drop.txasync(function(tx)
 				tx(store, "a", function(data)
@@ -55,9 +61,13 @@ return function(ctx)
 			end)
 		end)
 
+		drop.callbacks.externerror = oldexternerror
+
 		CASE("failed tx returns an error")
 		CHECK(success == false)
 		CHECK(string.find(tostring(err), "txphase1 failed to prepare all keys", 1, true) ~= nil)
+		CHECK(#externerrors == 2)
+		CHECK(string.find(externerrors[1], "boom", 1, true) ~= nil)
 
 		CASE("failed tx does not partially commit")
 		CHECK(deq(drop.viewasync(store, "a"), { coins = 5 }))

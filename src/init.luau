@@ -6,7 +6,7 @@ local store = require("@self/store")
 export type Schema<T> = schema.Schema<T>
 export type Store<T> = store.Store<T>
 
-return table.freeze({
+return table.freeze {
 	callbacks = callbacks,
 	mockdatastoreservice = mockdatastoreservice,
 
@@ -24,4 +24,4 @@ return table.freeze({
 	viewasync = store.viewasync,
 	updateasync = store.updateasync,
 	txasync = store.txasync,
-})
+}

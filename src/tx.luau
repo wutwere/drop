@@ -12,10 +12,10 @@ type TxRecord = {
 
 --- Creates a new txid, initializes its record in the tx store, and returns the
 --- txid.
---- 
+---
 --- The `keys` parameter indicates how many keys are involved in the
 --- transaction.
---- 
+---
 --- Returns the new txid, or nil if the creation failed.
 local function createasync(txstore: DataStore, keys: number): string?
 	local txid = HttpService:GenerateGUID(false)
@@ -33,19 +33,19 @@ local function createasync(txstore: DataStore, keys: number): string?
 end
 
 --- Commits the transaction with the given txid.
---- 
+---
 --- Returns the final status of the transaction, which will be either
 --- "committed" or "aborted".
---- 
+---
 --- The transaction may have been aborted already by another server, in which
 --- case this function will return "aborted".
---- 
+---
 --- If the transaction record is unable to be updated (for example, if datastore
 --- apis are failing), this function will return "aborted" without saving that
 --- state to the txstore. This is safe because only the server that created
 --- a transaction is able to commit it. Any other server will eventually abort
 --- the transaction if it remains pending.
---- 
+---
 --- This function may only be called if the txid was created by this server.
 local function commitasync(txstore: DataStore, txid: string): "committed" | "aborted"
 	local success, record: TxRecord = rbxapi.updateasync(txstore, txid, function(record: TxRecord): TxRecord?
@@ -65,7 +65,7 @@ local function commitasync(txstore: DataStore, txid: string): "committed" | "abo
 end
 
 --- Counts one adoption of the transaction with the given txid.
---- 
+---
 --- If all participants have adopted the transaction, the transaction record
 --- will be removed from the txstore.
 local function adoptasync(txstore: DataStore, txid: string, count: number)
@@ -80,15 +80,15 @@ local function adoptasync(txstore: DataStore, txid: string, count: number)
 end
 
 --- Attempts to resolve the transaction with the given txid.
---- 
+---
 --- Returns the status of the transaction, which may be "pending", "committed",
 --- or "aborted".
---- 
+---
 --- If `resolveasync` returns "committed" or "aborted", the transaction has been
 --- finalized. This function may abort a stale pending transaction.
---- 
+---
 --- If `resolveasync` returns "pending", then datastore apis are likely failing.
---- 
+---
 --- This function should be called by servers that did not create the
 --- transaction. This function should not be retried, as it implements its own
 --- retry logic.
@@ -124,9 +124,9 @@ local function resolveasync(txstore: DataStore, txid: string): TxStatus
 	return attempt(txid)
 end
 
-return table.freeze({
+return table.freeze {
 	createasync = createasync,
 	commitasync = commitasync,
 	adoptasync = adoptasync,
 	resolveasync = resolveasync,
-})
+}

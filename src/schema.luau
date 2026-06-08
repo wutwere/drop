@@ -8,10 +8,10 @@ export type Schema<T> = {
 local function create<T>(initial: T): Schema<T>
 	local initial = utils.deepfreeze(initial)
 
-	return table.freeze({
+	return table.freeze {
 		initial = initial,
 		migrations = table.freeze({} :: { (any) -> any }),
-	})
+	}
 end
 
 local function migrate<T, U>(schema: Schema<T>, migration: (T) -> U): Schema<U>
@@ -27,14 +27,14 @@ local function migrate<T, U>(schema: Schema<T>, migration: (T) -> U): Schema<U>
 	local migrations = table.clone(schema.migrations)
 	table.insert(migrations, migration)
 	table.freeze(migrations)
-	
-	return table.freeze({
+
+	return table.freeze {
 		initial = initial,
 		migrations = migrations,
-	})
+	}
 end
 
-return table.freeze({
+return table.freeze {
 	create = create,
 	migrate = migrate,
-})
+}
