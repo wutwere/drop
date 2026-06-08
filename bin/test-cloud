@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+source .env
+UNIVERSE_ID="10028721866"
+PLACE_ID="80203857873911"
+
+rocale-cli run --apiKey $ROBLOX_INTEGTEST_API_KEY -u $UNIVERSE_ID -p $PLACE_ID --load.project test.project.json --script test/Test.server.luau
