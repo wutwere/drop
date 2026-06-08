@@ -10,12 +10,15 @@ local RemoveAsync = DataStoreService:GetDataStore("_").RemoveAsync
 local GetOpts = Instance.new("DataStoreGetOptions")
 GetOpts.UseCache = false
 
-local function getdatastore(name: string): DataStore
-	return DataStoreService:GetDataStore(name)
+local function getdatastore(name: string, datastoreservice: any?): DataStore
+	local datastoreservice = datastoreservice or DataStoreService
+	return datastoreservice:GetDataStore(name)
 end
 
 local function getasync(datastore: DataStore, key: string): (boolean, any)
-	local success, result = pcall(GetAsync, datastore, key, GetOpts)
+	local success, result = pcall(function()
+		return datastore:GetAsync(key, GetOpts)
+	end)
 	if success then
 		return true, result
 	end
@@ -28,7 +31,9 @@ local function getasync(datastore: DataStore, key: string): (boolean, any)
 		retry = true,
 	})
 
-	local success, result = pcall(GetAsync, datastore, key, GetOpts)
+	local success, result = pcall(function()
+		return datastore:GetAsync(key, GetOpts)
+	end)
 	if success then
 		return true, result
 	end
@@ -45,7 +50,9 @@ local function getasync(datastore: DataStore, key: string): (boolean, any)
 end
 
 local function setasync(datastore: DataStore, key: string, value: any): boolean
-	local success, result = pcall(SetAsync, datastore, key, value)
+	local success, result = pcall(function()
+		return datastore:SetAsync(key, value)
+	end)
 	if success then
 		return true
 	end
@@ -58,7 +65,9 @@ local function setasync(datastore: DataStore, key: string, value: any): boolean
 		retry = true,
 	})
 
-	local success, result = pcall(SetAsync, datastore, key, value)
+	local success, result = pcall(function()
+		return datastore:SetAsync(key, value)
+	end)
 	if success then
 		return true
 	end
@@ -75,7 +84,9 @@ local function setasync(datastore: DataStore, key: string, value: any): boolean
 end
 
 local function updateasync(datastore: DataStore, key: string, transform: (any, DataStoreKeyInfo) -> any): (boolean, any, DataStoreKeyInfo)
-	local success, result, info = pcall(UpdateAsync, datastore, key, transform)
+	local success, result, info = pcall(function()
+		return datastore:UpdateAsync(key, transform)
+	end)
 	if success then
 		return true, result, info
 	end
@@ -88,7 +99,9 @@ local function updateasync(datastore: DataStore, key: string, transform: (any, D
 		retry = true,
 	})
 
-	local success, result, info = pcall(UpdateAsync, datastore, key, transform)
+	local success, result, info = pcall(function()
+		return datastore:UpdateAsync(key, transform)
+	end)
 	if success then
 		return true, result, info
 	end
@@ -105,7 +118,9 @@ local function updateasync(datastore: DataStore, key: string, transform: (any, D
 end
 
 local function removeasync(datastore: DataStore, key: string): boolean
-	local success, result = pcall(RemoveAsync, datastore, key)
+	local success, result = pcall(function()
+		return datastore:RemoveAsync(key)
+	end)
 	if success then
 		return true
 	end
@@ -118,7 +133,9 @@ local function removeasync(datastore: DataStore, key: string): boolean
 		retry = true,
 	})
 
-	local success, result = pcall(RemoveAsync, datastore, key)
+	local success, result = pcall(function()
+		return datastore:RemoveAsync(key)
+	end)
 	if success then
 		return true
 	end

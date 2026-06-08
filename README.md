@@ -20,6 +20,20 @@ local store = drop.store({
 })
 ```
 
+For Studio development and integration tests, you can swap in a mock datastore service instead of Roblox's live datastores.
+
+```luau
+local mock = drop.mockdatastoreservice.new()
+
+local store = drop.store({
+	name = "players",
+	schema = schema,
+	datastoreservice = mock,
+})
+```
+
+If you just want an isolated in-memory backend for a store, you can also pass `usemock = true`.
+
 Let's view jack's data. To view the data of any key, call `drop.viewasync`. This function yields and loads data directly from storage. If the data cannot be loaded for any reason, then this function will error.
 
 ```luau

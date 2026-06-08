@@ -1,11 +1,14 @@
 local callbacks = require("./callbacks")
 local schema = require("./schema")
+local MockDataStoreService = require("./mockdatastoreservice")
 local rbxapi = require("./rbxapi")
 local utils = require("./utils")
 local tx = require("./tx")
 
 export type Store<T> = {
+	read service: any,
 	read source: DataStore,
+	read txsource: DataStore,
 	read schema: schema.Schema<T>,
 
 	read lock: { [string]: { (T) -> T } },
@@ -136,6 +139,12 @@ local function releaselock<T>(store: Store<T>, key: string)
 	store.lock[key] = nil
 end
 
+local function getsharedtxsource(fns: { [Store<any>]: { [string]: (any) -> any } }): DataStore
+	local firststore = next(fns)
+	assert(firststore ~= nil, "transaction must include at least one update")
+	return firststore.txsource
+end
+
 --- Resolves the transaction on the given record, returning the updated record.
 --- 
 --- If `tx.resolveasync` is unable to resolve the transaction, the original
@@ -145,7 +154,7 @@ end
 --- updated accordingly, and the transaction is adopted.
 local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): Record
 	local txid = assert(record.tx, "no tx to resolve").id
-	local status = tx.resolveasync(txid)
+	local status = tx.resolveasync(store.txsource, txid)
 
 	if status == "committed" then
 		acquirelockasync(store, key)
@@ -166,7 +175,7 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 		releaselock(store, key)
 
 		if success then
-			task.defer(tx.adoptasync, txid, 1)
+			task.defer(tx.adoptasync, store.txsource, txid, 1)
 			return result
 		else
 			return record
@@ -189,7 +198,7 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 		releaselock(store, key)
 
 		if success then
-			task.defer(tx.adoptasync, txid, 1)
+			task.defer(tx.adoptasync, store.txsource, txid, 1)
 			return result
 		else
 			return record
@@ -371,6 +380,7 @@ end
 local function txcommitasync(fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string)
 	local thread = coroutine.running()
 	local total = 0
+	local txsource = getsharedtxsource(fns)
 
 	for store, keys in fns do
 		for key in keys do
@@ -407,7 +417,7 @@ local function txcommitasync(fns: { [Store<any>]: { [string]: (any) -> any } }, 
 		done += 1
 	end
 
-	task.defer(tx.adoptasync, txid, successful)
+	task.defer(tx.adoptasync, txsource, txid, successful)
 end
 
 --- Aborts the transaction by reverting all prepared updates in the second
@@ -415,6 +425,7 @@ end
 local function txabortasync(fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string)
 	local thread = coroutine.running()
 	local total = 0
+	local txsource = getsharedtxsource(fns)
 
 	for store, keys in fns do
 		for key in keys do
@@ -453,7 +464,7 @@ local function txabortasync(fns: { [Store<any>]: { [string]: (any) -> any } }, t
 		done += 1
 	end
 
-	tx.adoptasync(txid, successful)
+	tx.adoptasync(txsource, txid, successful)
 end
 
 --- Executes phase 2 of the transaction.
@@ -461,7 +472,7 @@ end
 --- This attempts to commit the transaction, and if successful, commits all
 --- updates. If the commit fails, it aborts the transaction instead.
 local function txphase2(thread: thread, fns: { [Store<any>]: { [string]: (any) -> any } }, txid: string)
-	local status = tx.commitasync(txid)
+	local status = tx.commitasync(getsharedtxsource(fns), txid)
 
 	if status == "committed" then
 		txcommitasync(fns, txid)
@@ -494,6 +505,7 @@ end
 --- aborts.
 local function txphase0(thread: thread, fns: { [Store<any>]: { [string]: (any) -> any } })
 	local total = 0
+	local txsource = getsharedtxsource(fns)
 
 	for store, keys in fns do
 		for key in keys do
@@ -503,7 +515,7 @@ local function txphase0(thread: thread, fns: { [Store<any>]: { [string]: (any) -
 		end
 	end
 
-	local txid = tx.createasync(total)
+	local txid = tx.createasync(txsource, total)
 
 	if txid == nil then
 		for store, keys in fns do
@@ -722,6 +734,19 @@ local function txasync<T>(fn: (tx: <T>(store: Store<T>, key: string, fn: (T) -> 
 		fns[store][key] = fn
 	end)
 
+	if next(fns) == nil then
+		return
+	end
+
+	local txservice = nil
+	for store in fns do
+		if txservice == nil then
+			txservice = store.service
+		elseif txservice ~= store.service then
+			error("cannot tx across stores with different datastore services")
+		end
+	end
+
 	task.defer(txphase0, coroutine.running(), fns)
 
 	local err = coroutine.yield()
@@ -734,9 +759,20 @@ local function create<T>(opts: {
 	name: string,
 	schema: schema.Schema<T>,
 	sessiontime: number?,
+	datastoreservice: any?,
+	usemock: boolean?,
 }): Store<T>
+	local service = opts.datastoreservice
+	if service == nil and opts.usemock then
+		service = MockDataStoreService.new()
+	end
+
+	service = service or game:GetService("DataStoreService")
+
 	local store: Store<T> = {
-		source = rbxapi.getdatastore(opts.name),
+		service = service,
+		source = rbxapi.getdatastore(opts.name, service),
+		txsource = rbxapi.getdatastore("droptxs", service),
 		schema = opts.schema,
 
 		lock = {},

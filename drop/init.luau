@@ -1,4 +1,5 @@
 local callbacks = require("@self/callbacks")
+local mockdatastoreservice = require("@self/mockdatastoreservice")
 local schema = require("@self/schema")
 local store = require("@self/store")
 
@@ -7,6 +8,7 @@ export type Store<T> = store.Store<T>
 
 return table.freeze({
 	callbacks = callbacks,
+	mockdatastoreservice = mockdatastoreservice,
 
 	schema = schema.create,
 	migrate = schema.migrate,
