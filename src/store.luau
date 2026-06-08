@@ -158,6 +158,34 @@ local function getsharedtxsource(fns: { [Store<any>]: { [string]: (any) -> any }
 	return firststore.txsource
 end
 
+type TxParticipant = {
+	store: Store<any>,
+	key: string,
+}
+
+local function gettxparticipants(fns: { [Store<any>]: { [string]: (any) -> any } }): { TxParticipant }
+	local participants: { TxParticipant } = {}
+
+	for store, keys in fns do
+		for key in keys do
+			table.insert(participants, {
+				store = store,
+				key = key,
+			})
+		end
+	end
+
+	table.sort(participants, function(a: TxParticipant, b: TxParticipant)
+		if a.store.source.Name ~= b.store.source.Name then
+			return a.store.source.Name < b.store.source.Name
+		end
+
+		return a.key < b.key
+	end)
+
+	return participants
+end
+
 --- Resolves the transaction on the given record, returning the updated record.
 ---
 --- If `tx.resolveasync` is unable to resolve the transaction, the original
@@ -504,24 +532,20 @@ end
 --- to phase 1. If the transaction cannot be created, it releases all locks and
 --- aborts.
 local function txphase0(thread: thread, fns: { [Store<any>]: { [string]: (any) -> any } })
-	local total = 0
+	local participants = gettxparticipants(fns)
+	local total = #participants
 	local txsource = getsharedtxsource(fns)
 
-	for store, keys in fns do
-		for key in keys do
-			acquirelockasync(store, key)
-			store.lock[key] = {}
-			total += 1
-		end
+	for _, participant in participants do
+		acquirelockasync(participant.store, participant.key)
+		participant.store.lock[participant.key] = {}
 	end
 
 	local txid = tx.createasync(txsource, total)
 
 	if txid == nil then
-		for store, keys in fns do
-			for key in keys do
-				releaselock(store, key)
-			end
+		for _, participant in participants do
+			releaselock(participant.store, participant.key)
 		end
 
 		task.defer(thread, "txphase0 failed to create tx")
