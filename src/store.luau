@@ -302,6 +302,10 @@ local function rtasync<T>(store: Store<T>, key: string)
 		end
 
 		local record = unwraprecord(store, record)
+		if record.tx then
+			record = resolvetxasync(store, key, record)
+		end
+
 		local record = migraterecord(store, key, record)
 
 		if record == nil then
@@ -822,8 +826,25 @@ local function create<T>(opts: {
 	}
 
 	game:BindToClose(function()
+		local keys = {}
 		for key in store.session.state do
-			task.defer(stopsessionasync, store, key)
+			table.insert(keys, key)
+		end
+
+		local remaining = #keys
+		for _, key in keys do
+			task.defer(function()
+				local success, err = pcall(stopsessionasync, store, key)
+				if not success then
+					callbacks.externerror(tostring(err))
+				end
+
+				remaining -= 1
+			end)
+		end
+
+		while remaining > 0 do
+			task.wait()
 		end
 	end)
 

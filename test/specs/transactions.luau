@@ -159,6 +159,73 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(store, "b"), { coins = 2 }))
 	end)
 
+	TEST("session sync repairs a committed single-key tx from another server", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "tx-single-key-session-repair",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(store, "player", function()
+			return { coins = 1000 }
+		end)
+
+		local commitseen = false
+		local snapshot
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if
+				not commitseen
+				and info.stage == "after"
+				and info.store == "droptxs"
+				and info.key ~= nil
+				and info.result.status == "committed"
+			then
+				commitseen = true
+				snapshot = drop.mockdatastoreservice.snapshot(service)
+				error("simulated crash after commit", 0)
+			end
+		end)
+
+		pcall(function()
+			drop.txasync(function(tx)
+				tx(store, "player", function(data)
+					return { coins = data.coins - 700 }
+				end)
+			end)
+		end)
+
+		CHECK(commitseen == true)
+		CHECK(snapshot ~= nil)
+
+		local recoveredservice = drop.mockdatastoreservice.new()
+		drop.mockdatastoreservice.restore(recoveredservice, snapshot)
+
+		local observer = drop.store {
+			name = "tx-single-key-session-repair",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = recoveredservice,
+			sessiontime = 0.01,
+		}
+
+		drop.startsession(observer, "player")
+		drop.waitforsession(observer, "player")
+
+		local started = os.clock()
+		while os.clock() - started < 0.2 do
+			task.wait(0.01)
+		end
+
+		local live = drop.view(observer, "player")
+		local direct = drop.viewasync(observer, "player")
+
+		CASE("session cache advances to the committed value without requiring a direct read")
+		CHECK(direct.coins == 300)
+		CHECK(live.coins == 300)
+
+		drop.stopsessionasync(observer, "player")
+	end)
+
 	TEST("concurrent servers preserve total currency across repeated transfers", function()
 		local service = drop.mockdatastoreservice.new()
 		local schema = drop.schema { coins = 0 }

@@ -4,4 +4,11 @@ source .env
 UNIVERSE_ID="10028721866"
 PLACE_ID="80203857873911"
 
-rocale-cli run --apiKey $ROBLOX_INTEGTEST_API_KEY -u $UNIVERSE_ID -p $PLACE_ID --load.project test.project.json --script test/Test.server.luau
+ROCALE_CLI="$(command -v rocale-cli)"
+
+if [[ -z "$ROCALE_CLI" ]]; then
+  printf 'rocale-cli not found in PATH\n' >&2
+  exit 1
+fi
+
+"$ROCALE_CLI" run --apiKey "$ROBLOX_INTEGTEST_API_KEY" -u "$UNIVERSE_ID" -p "$PLACE_ID" --load.project test.project.json --script test/Test.server.luau
