@@ -48,7 +48,11 @@ end
 ---
 --- This function may only be called if the txid was created by this server.
 local function commitasync(txstore: DataStore, txid: string): "committed" | "aborted"
-	local success, record: TxRecord = rbxapi.updateasync(txstore, txid, function(record: TxRecord): TxRecord?
+	local success, record: TxRecord? = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
+		if record == nil then
+			return nil
+		end
+
 		if record.status == "pending" then
 			record.status = "committed"
 			return record
@@ -57,7 +61,7 @@ local function commitasync(txstore: DataStore, txid: string): "committed" | "abo
 		return nil
 	end)
 
-	if success then
+	if success and record ~= nil then
 		return record.status :: "committed" | "aborted"
 	else
 		return "aborted"
@@ -69,12 +73,16 @@ end
 --- If all participants have adopted the transaction, the transaction record
 --- will be removed from the txstore.
 local function adoptasync(txstore: DataStore, txid: string, count: number)
-	local success, record: TxRecord = rbxapi.updateasync(txstore, txid, function(record: TxRecord)
+	local success, record: TxRecord? = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
+		if record == nil then
+			return nil
+		end
+
 		record.adopted += count
 		return record
 	end)
 
-	if success and record.adopted == record.total then
+	if success and record ~= nil and record.adopted == record.total then
 		rbxapi.removeasync(txstore, txid)
 	end
 end
@@ -94,21 +102,33 @@ end
 --- retry logic.
 local function resolveasync(txstore: DataStore, txid: string): TxStatus
 	local function attempt(txid: string): TxStatus
-		local success, record: TxRecord = rbxapi.updateasync(txstore, txid, function(record: TxRecord, info): TxRecord?
-			if record.status == "pending" then
-				local updatedtime = info.UpdatedTime // 1000
-				local currenttime = os.time()
-
-				if currenttime - updatedtime > 60 then
-					record.status = "aborted"
-					return record
+		local success, record: TxRecord? = rbxapi.updateasync(
+			txstore,
+			txid,
+			function(record: TxRecord?, info: DataStoreKeyInfo?): TxRecord?
+				if record == nil then
+					return nil
 				end
+
+				if record.status == "pending" then
+					if info == nil then
+						return nil
+					end
+
+					local updatedtime = info.UpdatedTime // 1000
+					local currenttime = os.time()
+
+					if currenttime - updatedtime > 60 then
+						record.status = "aborted"
+						return record
+					end
+				end
+
+				return nil
 			end
+		)
 
-			return nil
-		end)
-
-		if success then
+		if success and record ~= nil then
 			return record.status
 		else
 			return "pending"

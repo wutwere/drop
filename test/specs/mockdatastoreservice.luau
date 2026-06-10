@@ -32,4 +32,31 @@ return function(ctx)
 		CASE("restored backend returns the same value")
 		CHECK(deq(drop.viewasync(restoredstore, "player"), { coins = 25 }))
 	end)
+
+	TEST("updateasync returning nil on a fresh key errors cleanly", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "updateasync-nil-fresh",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		local success, err = pcall(function()
+			drop.updateasync(store, "fresh", function()
+				return nil
+			end)
+		end)
+
+		CASE("the cancelled update errors instead of indexing nil")
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "datastore update failed", 1, true) ~= nil)
+
+		local written = drop.updateasync(store, "fresh", function(data)
+			return { coins = data.coins + 3 }
+		end)
+
+		CASE("the key is still writable afterward")
+		CHECK(deq(written, { coins = 3 }))
+		CHECK(deq(drop.viewasync(store, "fresh"), { coins = 3 }))
+	end)
 end

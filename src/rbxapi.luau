@@ -10,7 +10,7 @@ local function getdatastore(name: string, datastoreservice: any?): DataStore
 	return datastoreservice:GetDataStore(name)
 end
 
-local function getasync(datastore: DataStore, key: string): (boolean, any)
+local function getasync(datastore: DataStore, key: string): (boolean, any?)
 	local success, result = pcall(function()
 		return datastore:GetAsync(key, GetOpts)
 	end)
@@ -82,7 +82,7 @@ local function updateasync(
 	datastore: DataStore,
 	key: string,
 	transform: (any, DataStoreKeyInfo) -> any
-): (boolean, any, DataStoreKeyInfo)
+): (boolean, any?, DataStoreKeyInfo?)
 	local success, result, info = pcall(function()
 		return datastore:UpdateAsync(key, transform)
 	end)

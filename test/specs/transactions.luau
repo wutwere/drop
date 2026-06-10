@@ -74,6 +74,61 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(store, "b"), { coins = 7 }))
 	end)
 
+	TEST("txasync aborts cleanly when a fresh key update returns nil", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "tx-nil-prepare",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(store, "committed", function()
+			return { coins = 10 }
+		end)
+
+		local success, err
+		task.defer(function()
+			success, err = pcall(function()
+				drop.txasync(function(tx)
+					tx(store, "fresh", function()
+						return nil
+					end)
+
+					tx(store, "committed", function(data)
+						return { coins = data.coins + 1 }
+					end)
+				end)
+			end)
+		end)
+
+		local started = os.clock()
+		while success == nil do
+			assert(os.clock() - started < 1, "tx with nil prepare did not finish in time")
+			task.wait()
+		end
+
+		CASE("tx returns an error instead of hanging")
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "txphase1 failed to prepare all keys", 1, true) ~= nil)
+
+		CASE("locks are released and committed data is unchanged")
+		CHECK(deq(drop.viewasync(store, "fresh"), { coins = 0 }))
+		CHECK(deq(drop.viewasync(store, "committed"), { coins = 10 }))
+
+		local followupsuccess, followuperr = pcall(function()
+			drop.txasync(function(tx)
+				tx(store, "fresh", function(data)
+					return { coins = data.coins + 2 }
+				end)
+			end)
+		end)
+
+		CASE("a later tx on the same key still completes")
+		CHECK(followupsuccess == true)
+		CHECK(followuperr == nil)
+		CHECK(deq(drop.viewasync(store, "fresh"), { coins = 2 }))
+	end)
+
 	TEST("txasync rejects stores backed by different datastore services", function()
 		local storea = drop.store {
 			name = "tx-mixed",
