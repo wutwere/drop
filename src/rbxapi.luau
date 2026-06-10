@@ -10,12 +10,12 @@ local function getdatastore(name: string, datastoreservice: any?): DataStore
 	return datastoreservice:GetDataStore(name)
 end
 
-local function getasync(datastore: DataStore, key: string): (boolean, any?)
-	local success, result = pcall(function()
+local function getasync(datastore: DataStore, key: string): (boolean, any?, DataStoreKeyInfo?)
+	local success, result, info = pcall(function()
 		return datastore:GetAsync(key, GetOpts)
 	end)
 	if success then
-		return true, result
+		return true, result, info
 	end
 
 	callbacks.apierror {
@@ -26,11 +26,11 @@ local function getasync(datastore: DataStore, key: string): (boolean, any?)
 		retry = true,
 	}
 
-	local success, result = pcall(function()
+	local success, result, info = pcall(function()
 		return datastore:GetAsync(key, GetOpts)
 	end)
 	if success then
-		return true, result
+		return true, result, info
 	end
 
 	callbacks.apierror {

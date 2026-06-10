@@ -293,10 +293,10 @@ function MockDataStore:UpdateAsync(
 				method = "UpdateAsync",
 				store = self.Name,
 				key = key,
-				result = deepcopy(before),
+				result = nil,
 				keyinfo = keyinfo,
 			})
-			return deepcopy(before), keyinfo
+			return nil, keyinfo
 		end
 
 		if before ~= data[key] then

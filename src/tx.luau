@@ -64,7 +64,12 @@ local function commitasync(txstore: DataStore, txid: string): "committed" | "abo
 	if success and record ~= nil then
 		return record.status :: "committed" | "aborted"
 	else
-		return "aborted"
+		local readsuccess, current: TxRecord? = rbxapi.getasync(txstore, txid)
+		if readsuccess and current ~= nil then
+			return current.status :: "committed" | "aborted"
+		else
+			return "aborted"
+		end
 	end
 end
 
@@ -102,34 +107,41 @@ end
 --- retry logic.
 local function resolveasync(txstore: DataStore, txid: string): TxStatus
 	local function attempt(txid: string): TxStatus
-		local success, record: TxRecord? = rbxapi.updateasync(
+		local success, record: TxRecord?, info = rbxapi.getasync(txstore, txid)
+		if not success or record == nil then
+			return "pending"
+		elseif record.status ~= "pending" then
+			return record.status
+		elseif info == nil then
+			return "pending"
+		end
+
+		local updatedtime = info.UpdatedTime // 1000
+		local currenttime = os.time()
+		if currenttime - updatedtime <= 60 then
+			return "pending"
+		end
+
+		local updatesuccess, updated: TxRecord? = rbxapi.updateasync(
 			txstore,
 			txid,
-			function(record: TxRecord?, info: DataStoreKeyInfo?): TxRecord?
-				if record == nil then
+			function(current: TxRecord?): TxRecord?
+				if current and current.status == "pending" then
+					current.status = "aborted"
+					return current
+				else
 					return nil
 				end
-
-				if record.status == "pending" then
-					if info == nil then
-						return nil
-					end
-
-					local updatedtime = info.UpdatedTime // 1000
-					local currenttime = os.time()
-
-					if currenttime - updatedtime > 60 then
-						record.status = "aborted"
-						return record
-					end
-				end
-
-				return nil
 			end
 		)
 
-		if success and record ~= nil then
-			return record.status
+		if updatesuccess and updated ~= nil then
+			return updated.status
+		end
+
+		local rereadsuccess, rerecord: TxRecord? = rbxapi.getasync(txstore, txid)
+		if rereadsuccess and rerecord ~= nil then
+			return rerecord.status
 		else
 			return "pending"
 		end

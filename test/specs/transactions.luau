@@ -129,6 +129,87 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(store, "fresh"), { coins = 2 }))
 	end)
 
+	TEST("prepared committed records no longer poison future txs", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "tx-committed-repair",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(store, "player", function()
+			return { coins = 4 }
+		end)
+
+		local snapshot
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if
+				snapshot == nil
+				and info.stage == "after"
+				and info.store == "droptxs"
+				and info.result
+				and info.result.status == "committed"
+			then
+				snapshot = drop.mockdatastoreservice.snapshot(service)
+				error("simulated crash after commit", 0)
+			end
+		end)
+
+		pcall(function()
+			drop.txasync(function(tx)
+				tx(store, "player", function(data)
+					return { coins = data.coins + 6 }
+				end)
+			end)
+		end)
+
+		CHECK(snapshot ~= nil)
+
+		local recovered = drop.mockdatastoreservice.new()
+		drop.mockdatastoreservice.restore(recovered, snapshot)
+		local recoveredstore = drop.store {
+			name = "tx-committed-repair",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = recovered,
+		}
+
+		local success, err = pcall(function()
+			drop.txasync(function(tx)
+				tx(recoveredstore, "player", function(data)
+					return { coins = data.coins + 1 }
+				end)
+			end)
+		end)
+
+		CASE("the first conflicting tx attempt still fails")
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "txphase1 failed to prepare all keys", 1, true) ~= nil)
+
+		local started = os.clock()
+		while true do
+			local repaired = drop.viewasync(recoveredstore, "player")
+			if repaired.coins == 10 then
+				break
+			end
+
+			assert(os.clock() - started < 1, "committed prepared record was not repaired in time")
+			task.wait()
+		end
+
+		local followupsuccess, followuperr = pcall(function()
+			drop.txasync(function(tx)
+				tx(recoveredstore, "player", function(data)
+					return { coins = data.coins + 1 }
+				end)
+			end)
+		end)
+
+		CASE("the prepared committed record is repaired for the next tx")
+		CHECK(followupsuccess == true)
+		CHECK(followuperr == nil)
+		CHECK(deq(drop.viewasync(recoveredstore, "player"), { coins = 11 }))
+	end)
+
 	TEST("txasync rejects stores backed by different datastore services", function()
 		local storea = drop.store {
 			name = "tx-mixed",

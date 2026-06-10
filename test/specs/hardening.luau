@@ -138,6 +138,33 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(recoveredstore, "b"), { coins = 22 }))
 	end)
 
+	TEST("resolveasync reads committed tx records even when UpdateAsync returns nil", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "tx-resolve-committed-status",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+		local txstore = service:GetDataStore("droptxs")
+
+		txstore:SetAsync("committed", {
+			status = "committed",
+			total = 1,
+			adopted = 0,
+		})
+		store.source:SetAsync("player", {
+			version = 0,
+			data = { coins = 5 },
+			tx = {
+				id = "committed",
+				data = { coins = 9 },
+			},
+		})
+
+		CASE("committed tx status repairs through public read path")
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 9 }))
+	end)
+
 	TEST("viewasync resolves aborted prepared tx records after a crash", function()
 		local service = drop.mockdatastoreservice.new()
 		local store = drop.store {

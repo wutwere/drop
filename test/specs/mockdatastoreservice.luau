@@ -59,4 +59,18 @@ return function(ctx)
 		CHECK(deq(written, { coins = 3 }))
 		CHECK(deq(drop.viewasync(store, "fresh"), { coins = 3 }))
 	end)
+
+	TEST("mock UpdateAsync returning nil matches Roblox semantics", function()
+		local service = drop.mockdatastoreservice.new()
+		local datastore = service:GetDataStore("mock-updateasync-nil")
+
+		datastore:SetAsync("player", { coins = 9 })
+		local result = datastore:UpdateAsync("player", function()
+			return nil
+		end)
+
+		CASE("UpdateAsync returns nil when transform cancels")
+		CHECK(result == nil)
+		CHECK(deq(select(1, datastore:GetAsync("player")), { coins = 9 }))
+	end)
 end
