@@ -11,4 +11,4 @@ if [[ -z "$ROCALE_CLI" ]]; then
   exit 1
 fi
 
-"$ROCALE_CLI" run --apiKey "$ROBLOX_INTEGTEST_API_KEY" -u "$UNIVERSE_ID" -p "$PLACE_ID" --load.project test.project.json --script test/Test.server.luau
+"$ROCALE_CLI" run --apiKey "$ROBLOX_INTEGTEST_API_KEY" -u "$UNIVERSE_ID" -p "$PLACE_ID" --load.project test.project.json --script test/Test.server.luau --timeout 30
