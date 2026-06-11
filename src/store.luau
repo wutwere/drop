@@ -624,6 +624,30 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 	end
 end
 
+--- Stops all active sessions for a store and flushes queued writes.
+local function closeasync<T>(store: Store<T>)
+	local keys = {}
+	for key in store.session.state do
+		table.insert(keys, key)
+	end
+
+	local remaining = #keys
+	for _, key in keys do
+		task.defer(function()
+			local success, err = pcall(stopsessionasync, store, key)
+			if not success then
+				callbacks.externerror(tostring(err))
+			end
+
+			remaining -= 1
+		end)
+	end
+
+	while remaining > 0 do
+		task.wait()
+	end
+end
+
 --- Views the cached data for a given key.
 ---
 --- If sync is not active for the given key, this errors.
@@ -845,29 +869,6 @@ local function create<T>(opts: {
 		},
 	}
 
-	game:BindToClose(function()
-		local keys = {}
-		for key in store.session.state do
-			table.insert(keys, key)
-		end
-
-		local remaining = #keys
-		for _, key in keys do
-			task.defer(function()
-				local success, err = pcall(stopsessionasync, store, key)
-				if not success then
-					callbacks.externerror(tostring(err))
-				end
-
-				remaining -= 1
-			end)
-		end
-
-		while remaining > 0 do
-			task.wait()
-		end
-	end)
-
 	return store
 end
 
@@ -876,6 +877,7 @@ return table.freeze {
 	startsession = startsession,
 	waitforsession = waitforsession,
 	issessionactive = issessionactive,
+	closeasync = closeasync,
 	stopsessionasync = stopsessionasync,
 	view = view,
 	update = update,

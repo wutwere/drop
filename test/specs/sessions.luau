@@ -202,4 +202,36 @@ return function(ctx)
 		CHECK(success == false)
 		CHECK(string.find(tostring(err), "no cached data", 1, true) ~= nil)
 	end)
+
+	TEST("closeasync flushes and stops every active session", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-close-flush",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 60,
+		}
+
+		drop.startsession(store, "alice")
+		drop.startsession(store, "bob")
+		drop.waitforsession(store, "alice")
+		drop.waitforsession(store, "bob")
+
+		drop.update(store, "alice", function(data)
+			return { coins = data.coins + 10 }
+		end)
+		drop.update(store, "bob", function(data)
+			return { coins = data.coins + 20 }
+		end)
+
+		drop.closeasync(store)
+
+		CASE("closeasync flushes queued writes for every active key")
+		CHECK(deq(drop.viewasync(store, "alice"), { coins = 10 }))
+		CHECK(deq(drop.viewasync(store, "bob"), { coins = 20 }))
+
+		CASE("closeasync stops every active session")
+		CHECK(drop.issessionactive(store, "alice") == false)
+		CHECK(drop.issessionactive(store, "bob") == false)
+	end)
 end

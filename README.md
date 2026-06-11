@@ -67,6 +67,14 @@ drop.startsession(store, "jack")
 drop.waitforsession(store, "jack")
 ```
 
+When your server is shutting down, call `drop.closeasync(store)` yourself during your shutdown sequence to flush and stop all active sessions for that store.
+
+```luau
+game:BindToClose(function()
+	drop.closeasync(store)
+end)
+```
+
 The session has been started, we can now view and update the data in the same way without yielding. Let's make a purchase item function. All updates passed to drop should be atomic and pure. Update functions may be called any number of times. To cancel an update, return `nil`.
 
 ```luau

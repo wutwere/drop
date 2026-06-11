@@ -17,6 +17,7 @@ return table.freeze {
 	startsession = store.startsession,
 	waitforsession = store.waitforsession,
 	issessionactive = store.issessionactive,
+	closeasync = store.closeasync,
 	stopsessionasync = store.stopsessionasync,
 	view = store.view,
 	update = store.update,
