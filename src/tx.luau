@@ -107,41 +107,29 @@ end
 --- retry logic.
 local function resolveasync(txstore: DataStore, txid: string): TxStatus
 	local function attempt(txid: string): TxStatus
-		local success, record: TxRecord?, info = rbxapi.getasync(txstore, txid)
-		if not success or record == nil then
-			return "pending"
-		elseif record.status ~= "pending" then
-			return record.status
-		elseif info == nil then
-			return "pending"
-		end
-
-		local updatedtime = info.UpdatedTime // 1000
-		local currenttime = os.time()
-		if currenttime - updatedtime <= 60 then
-			return "pending"
-		end
-
-		local updatesuccess, updated: TxRecord? = rbxapi.updateasync(
-			txstore,
-			txid,
-			function(current: TxRecord?): TxRecord?
-				if current and current.status == "pending" then
-					current.status = "aborted"
-					return current
-				else
-					return nil
-				end
+		local record: TxRecord?
+		local success = rbxapi.updateasync(txstore, txid, function(current: TxRecord?, info): TxRecord?
+			record = current
+			if current == nil then
+				return nil
+			elseif current.status ~= "pending" then
+				return nil
+			elseif info == nil then
+				return nil
 			end
-		)
 
-		if updatesuccess and updated ~= nil then
-			return updated.status
-		end
+			local updatedtime = info.UpdatedTime // 1000
+			local currenttime = os.time()
+			if currenttime - updatedtime <= 60 then
+				return nil
+			end
 
-		local rereadsuccess, rerecord: TxRecord? = rbxapi.getasync(txstore, txid)
-		if rereadsuccess and rerecord ~= nil then
-			return rerecord.status
+			current.status = "aborted"
+			return current
+		end)
+
+		if success and record ~= nil then
+			return record.status
 		else
 			return "pending"
 		end

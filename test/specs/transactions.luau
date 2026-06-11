@@ -210,6 +210,38 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(recoveredstore, "player"), { coins = 11 }))
 	end)
 
+	TEST("updateasync resolves committed tx records before applying the caller update", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "updateasync-resolve-commit",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+		local txstore = service:GetDataStore("droptxs")
+
+		txstore:SetAsync("committed", {
+			status = "committed",
+			total = 1,
+			adopted = 0,
+		})
+		store.source:SetAsync("player", {
+			version = 0,
+			data = { coins = 5 },
+			tx = {
+				id = "committed",
+				data = { coins = 9 },
+			},
+		})
+
+		local written = drop.updateasync(store, "player", function(data)
+			return { coins = data.coins + 1 }
+		end)
+
+		CASE("the caller update runs on the committed tx data")
+		CHECK(deq(written, { coins = 10 }))
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 10 }))
+	end)
+
 	TEST("txasync rejects stores backed by different datastore services", function()
 		local storea = drop.store {
 			name = "tx-mixed",

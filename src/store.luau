@@ -257,10 +257,12 @@ local function flushasync<T>(store: Store<T>, key: string): Record?
 	local queue = store.session.queue[key]
 	store.session.queue[key] = nil
 	store.lock[key] = queue
+	local blockedrecord: Record?
 
 	local success, record: Record? = rbxapi.updateasync(store.source, key, function(record: Record?): Record?
 		local record = unwraprecord(store, record)
 		if record.tx then
+			blockedrecord = record
 			return nil
 		end
 
@@ -274,6 +276,7 @@ local function flushasync<T>(store: Store<T>, key: string): Record?
 	end)
 
 	releaselock(store, key)
+	record = record or blockedrecord
 
 	if not success or record == nil or record.tx then
 		local newqueue = store.session.queue[key]
@@ -703,10 +706,12 @@ local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 	local function apply<T>(store: Store<T>, key: string, fn: (T) -> T): Record?
 		acquirelockasync(store, key)
 		store.lock[key] = {}
+		local blockedrecord: Record?
 
 		local success, record: Record? = rbxapi.updateasync(store.source, key, function(record: Record?): Record?
 			local record = unwraprecord(store, record)
 			if record.tx then
+				blockedrecord = record
 				return nil
 			end
 
@@ -729,6 +734,7 @@ local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
 		end)
 
 		releaselock(store, key)
+		record = record or blockedrecord
 
 		if not success or record == nil then
 			return nil

@@ -165,6 +165,60 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(store, "player"), { coins = 9 }))
 	end)
 
+	TEST("session flush resolves committed tx records before applying queued updates", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-flush-resolve-commit",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.01,
+		}
+		local txstore = service:GetDataStore("droptxs")
+
+		drop.updateasync(store, "player", function()
+			return { coins = 5 }
+		end)
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+
+		txstore:SetAsync("committed", {
+			status = "committed",
+			total = 1,
+			adopted = 0,
+		})
+		store.source:SetAsync("player", {
+			version = 0,
+			data = { coins = 5 },
+			tx = {
+				id = "committed",
+				data = { coins = 9 },
+			},
+		})
+
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 1 }
+		end)
+
+		local started = os.clock()
+		while true do
+			if deq(drop.viewasync(store, "player"), { coins = 10 }) then
+				break
+			end
+
+			assert(os.clock() - started < 1, "session flush did not resolve committed tx in time")
+			task.wait()
+		end
+
+		store.session.state.player = nil
+		store.session.loop.player = nil
+		store.session.cache.player = nil
+		store.session.queue.player = nil
+
+		CASE("queued session writes apply on top of the committed tx data")
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 10 }))
+	end)
+
 	TEST("viewasync resolves aborted prepared tx records after a crash", function()
 		local service = drop.mockdatastoreservice.new()
 		local store = drop.store {
