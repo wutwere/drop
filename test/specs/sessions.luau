@@ -203,6 +203,55 @@ return function(ctx)
 		CHECK(string.find(tostring(err), "no cached data", 1, true) ~= nil)
 	end)
 
+	TEST("rapid stopsessionasync plus startsession does not overlap session loops", function()
+		local service = drop.mockdatastoreservice.new()
+		local preload = drop.store {
+			name = "session-restart-no-overlap",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		drop.updateasync(preload, "player", function()
+			return { coins = 1 }
+		end)
+
+		local store = drop.store {
+			name = "session-restart-no-overlap",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.01,
+		}
+
+		local inread = 0
+		local overlaps = 0
+		drop.mockdatastoreservice.hook(service, "GetAsync", function(info)
+			if info.store ~= "session-restart-no-overlap" or info.key ~= "player" then
+				return
+			end
+
+			if info.stage == "before" then
+				inread += 1
+				if inread > 1 then
+					overlaps += 1
+				end
+				task.wait(0.03)
+			else
+				inread -= 1
+			end
+		end)
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+		drop.stopsessionasync(store, "player")
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+		task.wait(0.08)
+		drop.stopsessionasync(store, "player")
+
+		CASE("restart keeps only one polling loop per key")
+		CHECK(overlaps == 0)
+	end)
+
 	TEST("closeasync flushes and stops every active session", function()
 		local service = drop.mockdatastoreservice.new()
 		local store = drop.store {

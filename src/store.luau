@@ -16,6 +16,7 @@ export type Store<T> = {
 	read session: {
 		read time: number,
 
+		read owner: { [string]: {} },
 		read state: { [string]: "starting" | "active" },
 		read waiting: { [string]: { thread } },
 		read loop: { [string]: thread },
@@ -249,12 +250,36 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 	end
 end
 
+local function loadrecordasync<T>(store: Store<T>, key: string): Record?
+	local success, record: Record? = rbxapi.getasync(store.source, key)
+	if not success then
+		return nil
+	end
+
+	local record = unwraprecord(store, record)
+	if record.tx then
+		record = resolvetxasync(store, key, record)
+	end
+
+	local record = migraterecord(store, key, record)
+
+	if record == nil then
+		error("migration failed")
+	end
+
+	return record
+end
+
 --- Flushes the queued updates for a given key to the datastore.
 ---
 --- Returns the updated record on success, or nil on failure.
 local function flushasync<T>(store: Store<T>, key: string): Record?
 	acquirelockasync(store, key)
 	local queue = store.session.queue[key]
+	if queue == nil then
+		return nil
+	end
+
 	store.session.queue[key] = nil
 	store.lock[key] = queue
 	local blockedrecord: Record?
@@ -287,9 +312,7 @@ local function flushasync<T>(store: Store<T>, key: string): Record?
 		store.session.queue[key] = queue
 	end
 
-	if not success then
-		return nil
-	elseif record == nil then
+	if not success or record == nil then
 		return nil
 	elseif record.tx then
 		return resolvetxasync(store, key, record)
@@ -299,48 +322,18 @@ local function flushasync<T>(store: Store<T>, key: string): Record?
 end
 
 --- Real-time sync loop for a given key.
-local function rtasync<T>(store: Store<T>, key: string)
-	local function readasync<T>(store: Store<T>, key: string): T?
-		local success, record: Record? = rbxapi.getasync(store.source, key)
-		if not success then
-			return nil
-		end
+local function rtasync<T>(store: Store<T>, key: string, owner: {})
+	while store.session.owner[key] == owner and store.session.state[key] do
+		local record = if store.session.queue[key] then flushasync(store, key) else loadrecordasync(store, key)
+		local data: T? = if record then record.data else nil
 
-		local record = unwraprecord(store, record)
-		if record.tx then
-			record = resolvetxasync(store, key, record)
-		end
-
-		local record = migraterecord(store, key, record)
-
-		if record == nil then
-			error("migration failed")
-		end
-
-		return record.data
-	end
-
-	while store.session.state[key] do
-		if store.session.state[key] == "starting" then
-			local data = readasync(store, key)
-
-			if data then
+		if data and store.session.owner[key] == owner and store.session.state[key] then
+			if store.session.state[key] == "starting" then
 				store.session.state[key] = "active"
-				refresh(store, key, data)
 				resumewaiters(store, key)
 			end
-		elseif store.session.queue[key] then
-			local record = flushasync(store, key)
 
-			if record then
-				refresh(store, key, record.data)
-			end
-		else
-			local data = readasync(store, key)
-
-			if data then
-				refresh(store, key, data)
-			end
+			refresh(store, key, data)
 		end
 
 		task.wait(store.session.time)
@@ -583,9 +576,11 @@ local function startsession<T>(store: Store<T>, key: string)
 		error(`still stopping sync for key "{key}"`)
 	end
 
+	local owner = {}
+	store.session.owner[key] = owner
 	store.session.state[key] = "starting"
 	store.session.waiting[key] = {}
-	store.session.loop[key] = task.spawn(rtasync, store, key)
+	store.session.loop[key] = task.spawn(rtasync, store, key, owner)
 end
 
 --- Waits for real-time sync to start for a given key.
@@ -614,6 +609,7 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 		error(`sync not started for key "{key}"`)
 	end
 
+	store.session.owner[key] = nil
 	store.session.state[key] = nil
 	store.session.loop[key] = nil
 	resumewaiters(store, key)
@@ -700,20 +696,9 @@ end
 ---
 --- This function will error if the read fails.
 local function viewasync<T>(store: Store<T>, key: string): T
-	local success, record: Record? = rbxapi.getasync(store.source, key)
-	if not success then
-		error("datastore read failed")
-	end
-
-	local record = unwraprecord(store, record)
-	if record.tx then
-		record = resolvetxasync(store, key, record)
-	end
-
-	local record = migraterecord(store, key, record)
-
+	local record = loadrecordasync(store, key)
 	if record == nil then
-		error("migration failed")
+		error("datastore read failed")
 	end
 
 	refresh(store, key, record.data)
@@ -860,6 +845,7 @@ local function create<T>(opts: {
 		session = {
 			time = opts.sessiontime or 12,
 
+			owner = {},
 			state = {},
 			waiting = {},
 			loop = {},
