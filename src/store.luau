@@ -615,8 +615,11 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 	resumewaiters(store, key)
 	store.session.cache[key] = nil
 
-	while store.session.queue[key] do
+	while store.session.owner[key] == nil and store.session.queue[key] do
 		flushasync(store, key)
+		if store.session.owner[key] == nil and store.session.queue[key] then
+			task.wait(0.2)
+		end
 	end
 end
 
