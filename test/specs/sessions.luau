@@ -283,4 +283,67 @@ return function(ctx)
 		CHECK(drop.issessionactive(store, "alice") == false)
 		CHECK(drop.issessionactive(store, "bob") == false)
 	end)
+
+	TEST("closeasync waits for an in-flight stopsessionasync", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-close-waits-stop",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 60,
+		}
+
+		drop.startsession(store, "alice")
+		drop.startsession(store, "bob")
+		drop.waitforsession(store, "alice")
+		drop.waitforsession(store, "bob")
+
+		drop.update(store, "alice", function(data)
+			return { coins = data.coins + 10 }
+		end)
+		drop.update(store, "bob", function(data)
+			return { coins = data.coins + 20 }
+		end)
+
+		local holdalice = true
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if info.stage == "before" and info.store == "session-close-waits-stop" and info.key == "alice" then
+				while holdalice do
+					task.wait()
+				end
+			end
+		end)
+
+		local stopdone = false
+		task.defer(function()
+			drop.stopsessionasync(store, "alice")
+			stopdone = true
+		end)
+
+		local closedone = false
+		task.defer(function()
+			drop.closeasync(store)
+			closedone = true
+		end)
+
+		task.wait(0.02)
+
+		CASE("closeasync does not finish before the spawned stop flushes")
+		CHECK(stopdone == false)
+		CHECK(closedone == false)
+
+		holdalice = false
+
+		local started = os.clock()
+		while not (stopdone and closedone) do
+			assert(os.clock() - started < 1, "closeasync did not finish after stopsessionasync completed")
+			task.wait()
+		end
+
+		CASE("closeasync returns after the in-flight stop finishes")
+		CHECK(deq(drop.viewasync(store, "alice"), { coins = 10 }))
+		CHECK(deq(drop.viewasync(store, "bob"), { coins = 20 }))
+		CHECK(drop.issessionactive(store, "alice") == false)
+		CHECK(drop.issessionactive(store, "bob") == false)
+	end)
 end

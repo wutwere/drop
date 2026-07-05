@@ -219,6 +219,82 @@ return function(ctx)
 		CHECK(deq(drop.viewasync(store, "player"), { coins = 10 }))
 	end)
 
+	TEST("session flush migrates committed tx data before refreshing the session cache", function()
+		local service = drop.mockdatastoreservice.new()
+		local olds = drop.schema { coins = 0 }
+		local news = drop.migrate(olds, function(data)
+			return {
+				coins = data.coins,
+				gems = 0,
+			}
+		end)
+		local store = drop.store {
+			name = "session-flush-resolve-commit-migrate",
+			schema = news,
+			datastoreservice = service,
+			sessiontime = 0.2,
+		}
+		local txstore = service:GetDataStore("droptxs")
+
+		store.source:SetAsync("player", {
+			version = 0,
+			data = { coins = 5 },
+		})
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+
+		txstore:SetAsync("committed", {
+			status = "committed",
+			total = 1,
+			adopted = 0,
+		})
+		store.source:SetAsync("player", {
+			version = 0,
+			data = { coins = 5 },
+			tx = {
+				id = "committed",
+				data = { coins = 9 },
+			},
+		})
+
+		drop.update(store, "player", function(data)
+			return {
+				coins = data.coins + 1,
+				gems = data.gems + 2,
+			}
+		end)
+
+		local sawunmigratedcache = false
+		local started = os.clock()
+		while true do
+			local data = drop.view(store, "player")
+			if data.gems == nil then
+				sawunmigratedcache = true
+			end
+
+			local raw = store.source:GetAsync("player", { UseCache = false })
+			if raw and raw.tx == nil and deq(raw.data, { coins = 10, gems = 2 }) then
+				break
+			end
+
+			assert(os.clock() - started < 1, "session flush did not migrate committed tx data in time")
+			task.wait()
+		end
+
+		CASE("session cache never regresses to unmigrated committed tx data")
+		CHECK(sawunmigratedcache == false)
+
+		CASE("session cache is refreshed with migrated committed tx data")
+		CHECK(deq(drop.view(store, "player"), { coins = 10, gems = 2 }))
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 10, gems = 2 }))
+
+		store.session.state.player = nil
+		store.session.loop.player = nil
+		store.session.cache.player = nil
+		store.session.queue.player = nil
+	end)
+
 	TEST("viewasync resolves aborted prepared tx records after a crash", function()
 		local service = drop.mockdatastoreservice.new()
 		local store = drop.store {

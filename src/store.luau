@@ -51,6 +51,10 @@ end
 --- Migrations a record to the latest schema version, returning nil if a
 --- migration failed.
 local function migraterecord<T>(store: Store<T>, key: string, record: Record): Record?
+	if record.tx then
+		return record
+	end
+
 	local schema = store.schema
 	local data = record.data
 
@@ -217,8 +221,13 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 		releaselock(store, key)
 
 		if success and result ~= nil then
+			local migrated = migraterecord(store, key, result)
+			if migrated == nil then
+				error("migration failed")
+			end
+
 			task.defer(tx.adoptasync, store.txsource, txid, 1)
-			return result
+			return migrated
 		else
 			return record
 		end
@@ -240,8 +249,13 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 		releaselock(store, key)
 
 		if success and result ~= nil then
+			local migrated = migraterecord(store, key, result)
+			if migrated == nil then
+				error("migration failed")
+			end
+
 			task.defer(tx.adoptasync, store.txsource, txid, 1)
-			return result
+			return migrated
 		else
 			return record
 		end
@@ -625,24 +639,16 @@ end
 
 --- Stops all active sessions for a store and flushes queued writes.
 local function closeasync<T>(store: Store<T>)
-	local keys = {}
 	for key in store.session.state do
-		table.insert(keys, key)
-	end
-
-	local remaining = #keys
-	for _, key in keys do
-		task.defer(function()
+		task.spawn(function()
 			local success, err = pcall(stopsessionasync, store, key)
 			if not success then
 				callbacks.externerror(tostring(err))
 			end
-
-			remaining -= 1
 		end)
 	end
 
-	while remaining > 0 do
+	while next(store.lock) ~= nil or next(store.session.queue) ~= nil do
 		task.wait()
 	end
 end
