@@ -310,7 +310,13 @@ local function flushasync<T>(store: Store<T>, key: string): Record?
 			error("migration failed")
 		end
 
-		record.data = applyqueue(record.data, queue)
+		local first = applyqueue(record.data, queue)
+		local second = applyqueue(record.data, queue)
+		if not utils.deepequal(first, second) then
+			callbacks.externerror(`nondeterministic session flush for store "{store.source.Name}" key "{key}"`)
+		end
+
+		record.data = first
 		return record
 	end)
 

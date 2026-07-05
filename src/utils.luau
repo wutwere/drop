@@ -23,7 +23,32 @@ local function externcall<Arg, Ret>(fn: (Arg) -> Ret, arg: Arg): (boolean, Ret)
 	end, fn, arg)
 end
 
+local function deepequal(a: any, b: any): boolean
+	if a == b then
+		return true
+	elseif type(a) ~= type(b) then
+		return false
+	elseif type(a) ~= "table" then
+		return false
+	end
+
+	local count = 0
+	for key, value in a do
+		count += 1
+		if not deepequal(value, b[key]) then
+			return false
+		end
+	end
+
+	for _ in b do
+		count -= 1
+	end
+
+	return count == 0
+end
+
 return table.freeze {
 	deepfreeze = deepfreeze,
+	deepequal = deepequal,
 	externcall = externcall,
 }
