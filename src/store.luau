@@ -11,7 +11,7 @@ export type Store<T> = {
 	read txsource: DataStore,
 	read schema: schema.Schema<T>,
 
-	read lock: { [string]: { (T) -> T } },
+	read lock: { [string]: { (T) -> T? } },
 
 	read session: {
 		read time: number,
@@ -21,7 +21,7 @@ export type Store<T> = {
 		read waiting: { [string]: { thread } },
 		read loop: { [string]: thread },
 		read cache: { [string]: T },
-		read queue: { [string]: { (T) -> T } },
+		read queue: { [string]: { (T) -> T? } },
 		read observers: { (key: string, data: T) -> () },
 	},
 }
@@ -91,7 +91,7 @@ end
 ---
 --- If a function errors, its result is ignored and the data remains unchanged
 --- for the next function.
-local function applyqueue<T>(data: T, queue: { (T) -> T }): T
+local function applyqueue<T>(data: T, queue: { (T) -> T? }): T
 	for _, fn in queue do
 		local success, result = utils.externcall(fn, utils.deepfreeze(data))
 
@@ -600,7 +600,9 @@ local function startsession<T>(store: Store<T>, key: string)
 	store.session.owner[key] = owner
 	store.session.state[key] = "starting"
 	store.session.waiting[key] = {}
-	store.session.loop[key] = task.spawn(rtasync, store, key, owner)
+	store.session.loop[key] = task.spawn(function()
+		rtasync(store, key, owner)
+	end)
 end
 
 --- Waits for real-time sync to start for a given key.
@@ -647,7 +649,9 @@ end
 local function closeasync<T>(store: Store<T>)
 	for key in store.session.state do
 		task.spawn(function()
-			local success, err = pcall(stopsessionasync, store, key)
+			local success, err = pcall(function()
+				stopsessionasync(store, key)
+			end)
 			if not success then
 				callbacks.externerror(tostring(err))
 			end
@@ -675,7 +679,7 @@ end
 --- Queues an update function for a given key.
 ---
 --- If sync is not active for the given key, this errors.
-local function update<T>(store: Store<T>, key: string, fn: (T) -> T)
+local function update<T>(store: Store<T>, key: string, fn: (T) -> T?)
 	if store.session.state[key] ~= "active" then
 		error(`sync not active for key "{key}"`)
 	end
@@ -726,8 +730,8 @@ end
 --- This bypasses any real-time sync and cache.
 ---
 --- This function will error if the update fails.
-local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T): T
-	local function apply<T>(store: Store<T>, key: string, fn: (T) -> T): Record?
+local function updateasync<T>(store: Store<T>, key: string, fn: (T) -> T?): T
+	local function apply<T>(store: Store<T>, key: string, fn: (T) -> T?): Record?
 		acquirelockasync(store, key)
 		store.lock[key] = {}
 		local blockedrecord: Record?
@@ -799,10 +803,11 @@ end
 ---
 --- If the transaction is successful, all updates will be committed. If any
 --- update fails, all updates will be reverted.
-local function txasync<T>(fn: (tx: <T>(store: Store<T>, key: string, fn: (T) -> T) -> ()) -> ())
+local function txasync(fn: (tx: <T>(store: Store<T>, key: string, fn: (T) -> T?) -> ()) -> ())
 	local fns: { [Store<any>]: { [string]: (any) -> any } } = {}
 
-	fn(function(store: Store<T>, key: string, fn: (T) -> T)
+	-- Participants are stored type-erased in `fns`, like the rest of the tx machinery.
+	fn(function(store: Store<any>, key: string, fn: (any) -> any)
 		if fns[store] == nil then
 			fns[store] = {}
 		end
