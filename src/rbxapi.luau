@@ -6,7 +6,7 @@ local GetOpts = Instance.new("DataStoreGetOptions")
 GetOpts.UseCache = false
 
 local function getdatastore(name: string, datastoreservice: any?): DataStore
-	local datastoreservice = datastoreservice or DataStoreService
+	local datastoreservice: DataStoreService = datastoreservice or DataStoreService
 	return datastoreservice:GetDataStore(name)
 end
 

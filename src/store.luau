@@ -96,7 +96,7 @@ local function applyqueue<T>(data: T, queue: { (T) -> T? }): T
 		local success, result = utils.externcall(fn, utils.deepfreeze(data))
 
 		if success and result then
-			data = result
+			data = result :: T
 		end
 	end
 
