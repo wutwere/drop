@@ -5,6 +5,13 @@ local schema = require("./schema")
 local tx = require("./tx")
 local utils = require("./utils")
 
+-- Seconds between session loads and saves when a store doesn't set `sessiontime`.
+local DEFAULT_SESSION_TIME = 6
+
+-- Bounds, in seconds, of the wait between failed saves in stopsessionasync.
+local STOP_RETRY_MIN = 0.2
+local STOP_RETRY_MAX = 5
+
 export type Store<T> = {
 	read service: any,
 	read source: DataStore,
@@ -634,6 +641,10 @@ local function issessionactive<T>(store: Store<T>, key: string)
 end
 
 --- Stops real-time sync for a given key.
+---
+--- Retries saving queued updates until it succeeds, waiting longer after each
+--- failure (doubling from 0.2s up to 5s, with jitter) so a throttled or
+--- failing datastore is not hammered.
 local function stopsessionasync<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
 		error(`sync not started for key "{key}"`)
@@ -645,10 +656,12 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 	resumewaiters(store, key)
 	store.session.cache[key] = nil
 
+	local delay = STOP_RETRY_MIN
 	while store.session.owner[key] == nil and store.session.queue[key] do
 		flushasync(store, key)
 		if store.session.owner[key] == nil and store.session.queue[key] then
-			task.wait(0.2)
+			task.wait(delay * (0.75 + math.random() * 0.5))
+			delay = math.min(delay * 2, STOP_RETRY_MAX)
 		end
 	end
 end
@@ -871,7 +884,7 @@ local function create<T>(opts: {
 		lock = {},
 
 		session = {
-			time = opts.sessiontime or 12,
+			time = opts.sessiontime or DEFAULT_SESSION_TIME,
 
 			owner = {},
 			state = {},

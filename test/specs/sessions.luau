@@ -524,4 +524,48 @@ return function(ctx)
 
 		drop.stopsessionasync(store, "player")
 	end)
+
+	TEST("stopsessionasync backs off exponentially while saves fail", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-stop-backoff",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 60,
+		}
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 25 }
+		end)
+
+		-- Fail the first 4 save attempts. Each attempt makes 2 UpdateAsync calls.
+		local calls: { number } = {}
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if info.stage == "before" and info.store == "session-stop-backoff" and info.key == "player" then
+				table.insert(calls, os.clock())
+				if #calls <= 8 then
+					error("forced update failure", 0)
+				end
+			end
+		end)
+
+		drop.stopsessionasync(store, "player")
+
+		CASE("the save is retried until it succeeds")
+		CHECK(#calls == 9)
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 25 }))
+
+		CASE("the wait between attempts grows each time")
+		local gaps = {}
+		for attempt = 2, 5 do
+			table.insert(gaps, calls[attempt * 2 - 1] - calls[attempt * 2 - 3])
+		end
+		CHECK(gaps[1] >= 0.1)
+		CHECK(gaps[2] > gaps[1])
+		CHECK(gaps[3] > gaps[2])
+		CHECK(gaps[4] > gaps[3])
+		CHECK(gaps[4] >= 1)
+	end)
 end
