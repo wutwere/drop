@@ -719,7 +719,9 @@ end
 
 --- Views the data for a given key directly from the datastore.
 ---
---- This bypasses any real-time sync and cache.
+--- This bypasses any real-time sync and cache. It never updates the session
+--- cache or notifies observers: a read can overlap a session save, so its data
+--- may already include, or may predate, updates the session is still saving.
 ---
 --- This function will error if the read fails.
 local function viewasync<T>(store: Store<T>, key: string): T
@@ -727,8 +729,6 @@ local function viewasync<T>(store: Store<T>, key: string): T
 	if record == nil then
 		error("datastore read failed")
 	end
-
-	refresh(store, key, record.data)
 
 	return record.data
 end

@@ -412,4 +412,116 @@ return function(ctx)
 		CASE("storage holds the update applied once")
 		CHECK(deq(drop.viewasync(store, "player"), { coins = 40 }))
 	end)
+
+	TEST("viewasync during a committed but unconfirmed session save leaves the cache alone", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-viewasync-inflight-save",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.05,
+		}
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+
+		-- The session's save commits, but UpdateAsync does not return until released.
+		local holding = true
+		local committed = false
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if info.stage == "after" and info.store == "session-viewasync-inflight-save" and info.key == "player" then
+				committed = true
+				while holding do
+					task.wait()
+				end
+			end
+		end)
+
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 40 }
+		end)
+
+		local started = os.clock()
+		while not committed do
+			assert(os.clock() - started < 1, "session save never committed")
+			task.wait()
+		end
+
+		local direct = drop.viewasync(store, "player")
+
+		CASE("viewasync returns the committed value")
+		CHECK(deq(direct, { coins = 40 }))
+
+		CASE("the session cache has the update applied once")
+		CHECK(deq(drop.view(store, "player"), { coins = 40 }))
+
+		holding = false
+		drop.stopsessionasync(store, "player")
+	end)
+
+	TEST("viewasync that read before a session save finished does not roll back the cache", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-viewasync-stale-read",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.05,
+		}
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+
+		-- Hold the next read after it has captured the stored value.
+		local holdread = true
+		local readheld = false
+		drop.mockdatastoreservice.hook(service, "GetAsync", function(info)
+			if
+				not readheld
+				and info.stage == "after"
+				and info.store == "session-viewasync-stale-read"
+				and info.key == "player"
+			then
+				readheld = true
+				while holdread do
+					task.wait()
+				end
+			end
+		end)
+
+		local saved = false
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if info.stage == "after" and info.store == "session-viewasync-stale-read" and info.key == "player" then
+				saved = true
+			end
+		end)
+
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 40 }
+		end)
+
+		local direct
+		task.spawn(function()
+			direct = drop.viewasync(store, "player")
+		end)
+
+		local started = os.clock()
+		while not (readheld and saved and drop.view(store, "player").coins == 40) do
+			assert(os.clock() - started < 1, "session save never finished during the held read")
+			task.wait()
+		end
+
+		holdread = false
+		while direct == nil do
+			assert(os.clock() - started < 2, "viewasync never returned")
+			task.wait()
+		end
+
+		CASE("viewasync returns the value it read")
+		CHECK(deq(direct, { coins = 0 }))
+
+		CASE("the session cache keeps the saved update")
+		CHECK(deq(drop.view(store, "player"), { coins = 40 }))
+
+		drop.stopsessionasync(store, "player")
+	end)
 end

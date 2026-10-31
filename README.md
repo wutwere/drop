@@ -34,7 +34,7 @@ local store = drop.store({
 
 If you just want an isolated in-memory backend for a store, you can also pass `usemock = true`.
 
-Let's view jack's data. To view the data of any key, call `drop.viewasync`. This function yields and loads data directly from storage. If the data cannot be loaded for any reason, then this function will error.
+Let's view jack's data. To view the data of any key, call `drop.viewasync`. This function yields and loads data directly from storage. If the data cannot be loaded for any reason, then this function will error. It does not update an open session's cached data or notify observers.
 
 ```luau
 local data = drop.viewasync(store, "jack")
