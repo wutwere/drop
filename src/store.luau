@@ -589,11 +589,19 @@ local function txphase0(thread: thread, fns: { [Store<any>]: { [string]: (any) -
 end
 
 --- Starts real-time sync for a given key.
+---
+--- Errors if a session is already running for the key, if the previous
+--- session still has queued updates, or if a write for the key is still in
+--- flight. A write can commit before `UpdateAsync` returns, so loading while it
+--- is in flight would read the write and then reapply its updates. Retry once
+--- the write finishes.
 local function startsession<T>(store: Store<T>, key: string)
 	if store.session.state[key] then
 		error(`sync already started for key "{key}"`)
 	elseif store.session.queue[key] then
 		error(`still stopping sync for key "{key}"`)
+	elseif store.lock[key] then
+		error(`still saving key "{key}"`)
 	end
 
 	local owner = {}

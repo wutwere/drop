@@ -346,4 +346,70 @@ return function(ctx)
 		CHECK(drop.issessionactive(store, "alice") == false)
 		CHECK(drop.issessionactive(store, "bob") == false)
 	end)
+
+	TEST("startsession waits out a previous save that is committed but unconfirmed", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "session-restart-inflight-save",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 60,
+		}
+
+		drop.startsession(store, "player")
+		drop.waitforsession(store, "player")
+		drop.update(store, "player", function(data)
+			return { coins = data.coins + 40 }
+		end)
+
+		-- The stop flush's write commits, but UpdateAsync does not return until released.
+		local holding = true
+		local committed = false
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if info.stage == "after" and info.store == "session-restart-inflight-save" and info.key == "player" then
+				committed = true
+				while holding do
+					task.wait()
+				end
+			end
+		end)
+
+		local stopdone = false
+		task.spawn(function()
+			drop.stopsessionasync(store, "player")
+			stopdone = true
+		end)
+
+		local started = os.clock()
+		while not committed do
+			assert(os.clock() - started < 1, "stop flush never committed")
+			task.wait()
+		end
+
+		CASE("startsession refuses while the previous save is still in flight")
+		local success, err = pcall(drop.startsession, store, "player")
+		CHECK(success == false)
+		CHECK(string.find(tostring(err), "still saving", 1, true) ~= nil)
+
+		task.delay(0.05, function()
+			holding = false
+		end)
+
+		-- Retry like a caller would until the previous save is confirmed.
+		while not success do
+			assert(os.clock() - started < 2, "startsession never succeeded")
+			task.wait()
+			success = pcall(drop.startsession, store, "player")
+		end
+		drop.waitforsession(store, "player")
+
+		CASE("the new session loads the committed save exactly once")
+		CHECK(stopdone == true)
+		CHECK(deq(drop.view(store, "player"), { coins = 40 }))
+
+		drop.stopsessionasync(store, "player")
+
+		CASE("storage holds the update applied once")
+		CHECK(deq(drop.viewasync(store, "player"), { coins = 40 }))
+	end)
 end

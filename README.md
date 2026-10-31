@@ -67,6 +67,9 @@ drop.startsession(store, "jack")
 drop.waitforsession(store, "jack")
 ```
 
+> [!NOTE]
+> `drop.startsession` errors if the key's previous session is still stopping or a write for the key is still in flight, such as when a player rejoins before their last save finishes. Wait and call it again.
+
 When your server is shutting down, call `drop.closeasync(store)` yourself during your shutdown sequence to flush and stop all active sessions for that store.
 
 ```luau
