@@ -7,8 +7,19 @@ type TxStatus = "pending" | "committed" | "aborted"
 type TxRecord = {
 	status: TxStatus,
 	total: number,
+	-- Legacy adoption counter. Kept so servers on older versions can still
+	-- update records created by this one, but no longer read.
 	adopted: number,
+	adoptedby: { [string]: true }?,
 }
+
+--- Returns the id a transaction participant is adopted under.
+---
+--- The store name is length-prefixed so that no two store and key pairs share
+--- an id.
+local function participantid(storename: string, key: string): string
+	return `{#storename}:{storename}/{key}`
+end
 
 --- Creates a new txid, initializes its record in the tx store, and returns the
 --- txid.
@@ -73,21 +84,56 @@ local function commitasync(txstore: DataStore, txid: string): "committed" | "abo
 	end
 end
 
---- Counts one adoption of the transaction with the given txid.
+--- Records that the given participants, ids from `participantid`, have adopted
+--- the transaction with the given txid.
 ---
 --- If all participants have adopted the transaction, the transaction record
 --- will be removed from the txstore.
-local function adoptasync(txstore: DataStore, txid: string, count: number)
-	local success, record: TxRecord? = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
+---
+--- Adoptions are recorded by participant rather than counted, because a write
+--- can land even though `UpdateAsync` errors, and rbxapi then retries it. A
+--- counter would count those participants twice and could remove the record
+--- while another participant is still prepared, leaving that participant
+--- unable to resolve.
+local function adoptasync(txstore: DataStore, txid: string, participants: { string })
+	if #participants == 0 then
+		return
+	end
+
+	local current: TxRecord?
+	local success = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
+		current = record
 		if record == nil then
 			return nil
 		end
 
-		record.adopted += count
+		local adoptedby = record.adoptedby or {}
+		local changed = false
+		for _, participant in participants do
+			if not adoptedby[participant] then
+				adoptedby[participant] = true
+				changed = true
+			end
+		end
+
+		if not changed then
+			return nil
+		end
+
+		record.adoptedby = adoptedby
 		return record
 	end)
 
-	if success and record ~= nil and record.adopted == record.total then
+	if not success or current == nil or current.adoptedby == nil then
+		return
+	end
+
+	local adopted = 0
+	for _ in current.adoptedby do
+		adopted += 1
+	end
+
+	if adopted == current.total then
 		rbxapi.removeasync(txstore, txid)
 	end
 end
@@ -145,6 +191,7 @@ local function resolveasync(txstore: DataStore, txid: string): TxStatus
 end
 
 return table.freeze {
+	participantid = participantid,
 	createasync = createasync,
 	commitasync = commitasync,
 	adoptasync = adoptasync,

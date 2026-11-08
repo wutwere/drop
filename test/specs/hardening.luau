@@ -488,4 +488,84 @@ return function(ctx)
 		drop.stopsessionasync(serverb, "alice")
 		drop.stopsessionasync(serverb, "bob")
 	end)
+
+	TEST("a retried adoption does not remove the tx record before every key settles", function()
+		local service = drop.mockdatastoreservice.new()
+		local store = drop.store {
+			name = "tx-adopt-retry",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+		local txstore = service:GetDataStore("droptxs")
+
+		drop.updateasync(store, "a", function()
+			return { coins = 1 }
+		end)
+		drop.updateasync(store, "b", function()
+			return { coins = 2 }
+		end)
+
+		local txid
+		local commitfailures = 0
+		local txwrites = 0
+		drop.mockdatastoreservice.hook(service, "UpdateAsync", function(info)
+			if
+				info.store == "tx-adopt-retry"
+				and info.key == "b"
+				and info.stage == "before"
+				and info.value ~= nil
+				and info.value.tx ~= nil
+				and commitfailures < 2
+			then
+				-- Fail both attempts of b's phase 2 commit, so b stays prepared.
+				commitfailures += 1
+				error("simulated commit failure", 0)
+			elseif info.store == "droptxs" and info.stage == "after" then
+				-- The first tx store write commits the tx. The second is the
+				-- coordinator's adoption: let it land, then lose the response
+				-- so rbxapi retries it.
+				txid = info.key
+				txwrites += 1
+				if txwrites == 2 then
+					error("simulated lost response after the adoption landed", 0)
+				end
+			end
+		end)
+
+		drop.txasync(function(tx)
+			tx(store, "a", function(data)
+				return { coins = data.coins + 10 }
+			end)
+			tx(store, "b", function(data)
+				return { coins = data.coins + 20 }
+			end)
+		end)
+
+		local started = os.clock()
+		while txwrites < 3 do
+			assert(os.clock() - started < 1, "the adoption was not retried")
+			task.wait()
+		end
+		task.wait()
+
+		CASE("the tx record survives while b is still prepared")
+		CHECK(commitfailures == 2)
+		CHECK(txstore:GetAsync(txid) ~= nil)
+
+		CASE("b still resolves to the committed data")
+		CHECK(deq(drop.viewasync(store, "a"), { coins = 11 }))
+		CHECK(deq(drop.viewasync(store, "b"), { coins = 22 }))
+
+		CASE("the tx record is removed once every key has settled")
+		local removed = false
+		started = os.clock()
+		while os.clock() - started < 1 do
+			if txstore:GetAsync(txid) == nil then
+				removed = true
+				break
+			end
+			task.wait()
+		end
+		CHECK(removed)
+	end)
 end

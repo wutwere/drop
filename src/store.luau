@@ -233,7 +233,7 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 				error("migration failed")
 			end
 
-			task.defer(tx.adoptasync, store.txsource, txid, 1)
+			task.defer(tx.adoptasync, store.txsource, txid, { tx.participantid(store.source.Name, key) })
 			return migrated
 		else
 			return record
@@ -261,7 +261,7 @@ local function resolvetxasync<T>(store: Store<T>, key: string, record: Record): 
 				error("migration failed")
 			end
 
-			task.defer(tx.adoptasync, store.txsource, txid, 1)
+			task.defer(tx.adoptasync, store.txsource, txid, { tx.participantid(store.source.Name, key) })
 			return migrated
 		else
 			return record
@@ -465,24 +465,26 @@ local function txcommitasync(fns: { [Store<any>]: { [string]: (any) -> any } }, 
 
 				if success and record ~= nil then
 					refresh(store, key, record.data)
+					coroutine.resume(thread, tx.participantid(store.source.Name, key))
+				else
+					coroutine.resume(thread, nil)
 				end
-
-				coroutine.resume(thread, success and record ~= nil)
 			end, store, key, txid, thread)
 		end
 	end
 
 	local done = 0
-	local successful = 0
+	local adopted: { string } = {}
 	while done < total do
-		if coroutine.yield() then
-			successful += 1
+		local participant: string? = coroutine.yield()
+		if participant then
+			table.insert(adopted, participant)
 		end
 
 		done += 1
 	end
 
-	task.defer(tx.adoptasync, txsource, txid, successful)
+	task.defer(tx.adoptasync, txsource, txid, adopted)
 end
 
 --- Aborts the transaction by reverting all prepared updates in the second
@@ -516,24 +518,26 @@ local function txabortasync(fns: { [Store<any>]: { [string]: (any) -> any } }, t
 
 				if success and record ~= nil then
 					refresh(store, key, record.data)
+					coroutine.resume(thread, tx.participantid(store.source.Name, key))
+				else
+					coroutine.resume(thread, nil)
 				end
-
-				coroutine.resume(thread, success and record ~= nil)
 			end, store, key, txid, thread)
 		end
 	end
 
 	local done = 0
-	local successful = 0
+	local adopted: { string } = {}
 	while done < total do
-		if coroutine.yield() then
-			successful += 1
+		local participant: string? = coroutine.yield()
+		if participant then
+			table.insert(adopted, participant)
 		end
 
 		done += 1
 	end
 
-	tx.adoptasync(txsource, txid, successful)
+	tx.adoptasync(txsource, txid, adopted)
 end
 
 --- Executes phase 2 of the transaction.
