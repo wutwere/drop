@@ -43,22 +43,35 @@ local data = drop.viewasync(store, "jack")
 Jack purchased a developer product for 1000 coins, so let's give that to him. To update data use `drop.updateasync`. This function yields while it attempts to apply the update directly to storage. If the update fails for any reason, then the function will error. This should be the function you use when you need to know if an update was successful.
 
 ```luau
-local success = pcall(drop.updateasync, store, "jack", function(data)
-	return {
-		coins = data.coins + 1000,
-		items = data.items,
-	}
-end)
+local function processreceipt(receipt)
+	local success = pcall(drop.updateasync, store, "jack", function(data)
+		if data.purchases[receipt.PurchaseId] then
+			return data
+		end
 
-if success then
-	return Enum.ProductPurchaseDecision.PurchaseGranted
-else
-	return Enum.ProductPurchaseDecision.NotProcessedYet
+		local purchases = table.clone(data.purchases)
+		purchases[receipt.PurchaseId] = true
+
+		return {
+			coins = data.coins + 1000,
+			items = data.items,
+			purchases = purchases,
+		}
+	end)
+
+	if success then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	else
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
 end
 ```
 
 > [!TIP]
-> `drop.updateasync` implements its own internal retry logic. Don't repeatedly call `drop.updateasync` if it errors.
+> `drop.updateasync` implements its own internal retry logic, and applies the update once even when it has to retry. Don't repeatedly call `drop.updateasync` if it errors.
+
+> [!NOTE]
+> An update can be saved even though `drop.updateasync` errors. Roblox calls `ProcessReceipt` again after `NotProcessedYet`, and drop cannot know that both calls are the same purchase. Keep the `PurchaseId`s you have granted in the data, with `purchases = {} :: { [string]: true }` in the schema, and check them inside the update as above.
 
 We don't want to worry about catching errors, and we want updates to apply immediately. That means we're going to need to open a session. To start a session, call `drop.startsession`. This function does not yield, but the session will not be immediately available. To wait for the key's session to be available, call `drop.waitforsession`.
 
@@ -69,6 +82,9 @@ drop.waitforsession(store, "jack")
 
 > [!NOTE]
 > `drop.startsession` errors if the key's previous session is still stopping or a write for the key is still in flight, such as when a player rejoins before their last save finishes. Wait and call it again.
+
+> [!NOTE]
+> `drop.waitforsession` errors if the session cannot start: the key's data was saved by a newer version of your schema, or a migration errored on it. A session that runs into either later stops and discards its unsaved updates. Both are reported through `drop.callbacks.externerror`. `drop.stopsessionasync` errors for a session that already ended this way, so check `drop.issessionactive` first.
 
 When your server is shutting down, call `drop.closeasync(store)` yourself during your shutdown sequence to flush and stop all active sessions for that store.
 
@@ -98,10 +114,12 @@ local function purchase(key: string, item: string, cost: number)
 end
 ```
 
-Updates from `drop.update` apply immediately, but we want to see this data changing. For that, we can make an observer. Observers take functions that get called every time data updates. The data may be the same, or it may be different.
+An update is applied to the session's data at once and saved later. When it is saved, another server may have changed the data so that the update returns `nil` or errors. Such an update is dropped and reported through `drop.callbacks.updatedropped`.
+
+Updates from `drop.update` apply immediately, but we want to see this data changing. For that, we can make an observer. Observers take functions that get called every time data updates. The data may be the same, or it may be different. `drop.observe` returns a function that stops the observer.
 
 ```luau
-drop.observe(store, function(key, data)
+local disconnect = drop.observe(store, function(key, data)
 	print(`{key} has {data.coins} coins!`)
 end)
 ```
@@ -141,6 +159,37 @@ drop.txasync(function(tx)
 	end)
 end)
 ```
+
+`drop.txasync` errors if the transaction was not applied. One error is different: when the message contains `outcome unknown`, drop could not find out whether the transaction was committed, and it may still be applied to every key. Don't retry it and don't undo it. Read the data again later to see what happened.
+
+## Store options
+
+```luau
+local store = drop.store({
+	name = "players",
+	schema = schema,
+
+	-- Seconds between saves of a session. Defaults to 6.
+	sessiontime = 6,
+
+	-- The longest a session with nothing to save waits between loads. A
+	-- change made by another server takes up to this long to show up.
+	-- Defaults to five times sessiontime.
+	idletime = 30,
+
+	-- Seconds before a failed datastore call is retried. Defaults to 0.5.
+	retrydelay = 0.5,
+
+	-- The user ids to tag a key's data with, for data erasure requests.
+	userids = function(key)
+		return { tonumber(key) }
+	end,
+})
+```
+
+To erase a key, call `drop.removeasync(store, key)`. It errors if the key has a session on this server.
+
+Data is limited to 4,000,000 characters of JSON per key. An update that would go over is refused: `drop.updateasync` and `drop.txasync` error, and a session discards its unsaved updates and reports that through `drop.callbacks.externerror`.
 
 ## Help
 
