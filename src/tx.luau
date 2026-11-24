@@ -4,6 +4,9 @@ local HttpService = game:GetService("HttpService")
 
 type TxStatus = "pending" | "committed" | "aborted"
 
+-- How many times commitasync tries to settle a commit it could not confirm.
+local SETTLE_ROUNDS = 3
+
 type TxRecord = {
 	status: TxStatus,
 	total: number,
@@ -45,43 +48,61 @@ end
 
 --- Commits the transaction with the given txid.
 ---
---- Returns the final status of the transaction, which will be either
---- "committed" or "aborted".
+--- Returns "committed" or "aborted" once the tx record durably says so.
 ---
---- The transaction may have been aborted already by another server, in which
---- case this function will return "aborted".
+--- A write can land even though `UpdateAsync` errors. When the commit cannot
+--- be confirmed, this function settles the record instead of guessing: it
+--- switches a record that is still pending to aborted, and returns the status
+--- it finds. Returning "aborted" for a commit that landed would roll back keys
+--- that other servers resolve as committed.
 ---
---- If the transaction record is unable to be updated (for example, if datastore
---- apis are failing), this function will return "aborted" without saving that
---- state to the txstore. This is safe because only the server that created
---- a transaction is able to commit it. Any other server will eventually abort
---- the transaction if it remains pending.
+--- Returns "unknown" when the record cannot be read or settled, or when it is
+--- gone after this server tried to commit it. A record is removed once every
+--- participant has adopted it, and by then it no longer says how it ended.
+--- The caller must leave every key prepared. Resolvers settle them from the
+--- record.
 ---
 --- This function may only be called if the txid was created by this server.
-local function commitasync(txstore: DataStore, txid: string): "committed" | "aborted"
+local function commitasync(txstore: DataStore, txid: string): "committed" | "aborted" | "unknown"
+	local attempted = false
 	local success, record: TxRecord? = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
-		if record == nil then
+		if record == nil or record.status ~= "pending" then
 			return nil
 		end
 
-		if record.status == "pending" then
-			record.status = "committed"
-			return record
-		end
-
-		return nil
+		attempted = true
+		record.status = "committed"
+		return record
 	end)
 
 	if success and record ~= nil then
-		return record.status :: "committed" | "aborted"
-	else
-		local readsuccess, current: TxRecord? = rbxapi.getasync(txstore, txid)
-		if readsuccess and current ~= nil then
-			return current.status :: "committed" | "aborted"
-		else
-			return "aborted"
+		return "committed"
+	end
+
+	for _ = 1, SETTLE_ROUNDS do
+		local found: TxRecord?
+		local success = rbxapi.updateasync(txstore, txid, function(record: TxRecord?): TxRecord?
+			found = record
+			if record ~= nil and record.status == "pending" then
+				record.status = "aborted"
+				return record
+			end
+
+			return nil
+		end)
+
+		if success then
+			if found ~= nil then
+				return found.status :: "committed" | "aborted"
+			elseif attempted then
+				return "unknown"
+			else
+				return "aborted"
+			end
 		end
 	end
+
+	return "unknown"
 end
 
 --- Records that the given participants, ids from `participantid`, have adopted
@@ -148,6 +169,16 @@ end
 ---
 --- If `resolveasync` returns "pending", then datastore apis are likely failing.
 ---
+--- A tx record that does not exist resolves as "aborted". A record is removed
+--- only after every participant has adopted it, so a key that still holds the
+--- marker got it from a prepare write that landed after the transaction was
+--- settled. A transaction only commits once every prepare has reported back,
+--- so such a write belongs to a transaction that was aborted.
+---
+--- This holds only while every server adopts by participant id. A server from
+--- before that change can remove the record of a committed transaction while
+--- a key is still prepared, and that key is then rolled back here.
+---
 --- This function should be called by servers that did not create the
 --- transaction. This function should not be retried, as it implements its own
 --- retry logic.
@@ -174,10 +205,12 @@ local function resolveasync(txstore: DataStore, txid: string): TxStatus
 			return current
 		end)
 
-		if success and record ~= nil then
-			return record.status
-		else
+		if not success then
 			return "pending"
+		elseif record == nil then
+			return "aborted"
+		else
+			return record.status
 		end
 	end
 

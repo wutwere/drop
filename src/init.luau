@@ -24,5 +24,6 @@ return table.freeze {
 	observe = store.observe,
 	viewasync = store.viewasync,
 	updateasync = store.updateasync,
+	removeasync = store.removeasync,
 	txasync = store.txasync,
 }
