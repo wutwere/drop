@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+# Model-checks verify/DropTx.tla against every row of verify/checks.tsv.
+
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(dirname "$script_dir")"
+verify_dir="$repo_dir/verify"
+cache_dir="$repo_dir/.cache/verify"
+
+TLC_VERSION="1.7.4"
+TLC_SHA256="936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+TLC_URL="https://github.com/tlaplus/tlaplus/releases/download/v$TLC_VERSION/tla2tools.jar"
+jar="${TLA2TOOLS:-$cache_dir/tla2tools-$TLC_VERSION.jar}"
+
+usage() {
+	cat <<EOF
+Usage: $0 [--trace CHECK]
+
+Runs every check in verify/checks.tsv and compares each result with the
+result the file expects. Exits 0 only when all of them match.
+
+  --trace CHECK   Run one check and print what TLC printed, including the
+                  steps that lead to a broken rule.
+EOF
+}
+
+trace=""
+case "${1:-}" in
+--help)
+	usage
+	exit 0
+	;;
+--trace)
+	trace="${2:?--trace needs the name of a check}"
+	;;
+"") ;;
+*)
+	usage >&2
+	exit 2
+	;;
+esac
+
+java="$(cd "$repo_dir" && mise which java 2>/dev/null || command -v java || true)"
+
+if [ -z "$java" ] || ! "$java" -version >/dev/null 2>&1; then
+	printf 'java not found. Run `mise install` in %s.\n' "$repo_dir" >&2
+	exit 2
+fi
+
+if [ ! -f "$jar" ]; then
+	mkdir -p "$cache_dir"
+	curl -fsSL -o "$jar.part" "$TLC_URL"
+	printf '%s  %s\n' "$TLC_SHA256" "$jar.part" | sha256sum -c --quiet -
+	mv "$jar.part" "$jar"
+fi
+
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
+
+# Prints "holds", "breaks", or "error" for one check, and leaves TLC's output
+# in $work_dir/$name/tlc.out.
+run_check() {
+	local name="$1" keys="$2" fails="$3" lostat="$4" crashes="$5" declines="$6" impatient="$7" mutant="$8" rule="$9"
+	local dir="$work_dir/$name"
+	mkdir -p "$dir/tmp"
+	cp "$verify_dir/DropTx.tla" "$dir/"
+
+	local keyset=""
+	for i in $(seq 1 "$keys"); do
+		keyset="${keyset:+$keyset, }k$i"
+	done
+
+	cat >"$dir/DropTx.cfg" <<EOF
+SPECIFICATION Spec
+CONSTANTS
+    Keys = {$keyset}
+    Fails = $fails
+    LostAt = $lostat
+    Crashes = $crashes
+    Declines = $declines
+    Impatient = $impatient
+    Mutant = "$mutant"
+INVARIANTS ${rule//,/ }
+EOF
+
+	(cd "$dir" && "$java" -Xmx1g -Djava.io.tmpdir="$dir/tmp" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers 1 -metadir "$dir/states" DropTx >tlc.out 2>&1) || true
+
+	if grep -q "No error has been found" "$dir/tlc.out"; then
+		printf 'holds'
+	elif grep -Eq "Invariant (${rule//,/|}) is violated" "$dir/tlc.out"; then
+		printf 'breaks'
+	else
+		printf 'error'
+	fi
+}
+
+jobs_max="${VERIFY_JOBS:-$(( ($(nproc) + 1) / 2 ))}"
+names=()
+rules=()
+expects=()
+
+while IFS=$'\t' read -r name keys fails lostat crashes declines impatient mutant rule expect note; do
+	case "$name" in
+	"" | \#* | check) continue ;;
+	esac
+
+	if [ -n "$trace" ] && [ "$trace" != "$name" ]; then
+		continue
+	fi
+
+	names+=("$name")
+	rules+=("$rule")
+	expects+=("$expect")
+
+	while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do
+		wait -n
+	done
+
+	run_check "$name" "$keys" "$fails" "$lostat" "$crashes" "$declines" "$impatient" "$mutant" "$rule" >"$work_dir/$name.result" &
+done <"$verify_dir/checks.tsv"
+
+wait
+
+failed=0
+found="${#names[@]}"
+
+for i in "${!names[@]}"; do
+	name="${names[$i]}"
+	result="$(cat "$work_dir/$name.result")"
+
+	if [ -n "$trace" ]; then
+		cat "$work_dir/$name/tlc.out"
+	elif [ "$result" = "${expects[$i]}" ]; then
+		printf 'ok          %-36s %-34s %s\n' "$name" "${rules[$i]}" "$result"
+	else
+		failed=1
+		printf 'UNEXPECTED  %-36s %-34s %s, expected %s\n' "$name" "${rules[$i]}" "$result" "${expects[$i]}"
+		if [ "$result" = "error" ]; then
+			tail -n 20 "$work_dir/$name/tlc.out" >&2
+		fi
+	fi
+done
+
+if [ "$found" = 0 ]; then
+	printf 'no check named "%s" in verify/checks.tsv\n' "$trace" >&2
+	exit 2
+fi
+
+if [ -n "$trace" ]; then
+	exit 0
+fi
+
+if [ "$failed" = 0 ]; then
+	printf 'VERIFY PASS\n'
+else
+	printf 'VERIFY FAIL\n' >&2
+	exit 1
+fi

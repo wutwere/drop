@@ -1,0 +1,28 @@
+# One model-checking run per row. bin/verify runs them all.
+#
+# check      name of the row. A "mutant-" row is a deliberately broken variant
+#            of the model, there to show that the rule can fail. A "finding-"
+#            row is a rule the current code breaks. There are none right now.
+# keys       number of keys in the transaction
+# fails      a datastore call can fail without writing
+# lostat     call sites where a write can land and still report an error
+# crashes    the coordinating server can stop at any step
+# declines   an update function can return nil
+# impatient  a resolver can abort the tx while the coordinator still runs
+# mutant     "none", or a broken variant defined in DropTx.tla
+# rule       the invariant of DropTx.tla to check
+# expect     "holds" or "breaks"
+#
+check	keys	fails	lostat	crashes	declines	impatient	mutant	rule	expect	note
+all-failures	2	TRUE	{"prepare","commit","settle","finish","adopt","resolve","expire"}	TRUE	TRUE	TRUE	none	Atomic,TruthfulReply,Resolvable	holds	calls fail, writes land and report errors, the coordinator can stop, updates can return nil
+all-failures-patient	2	TRUE	{"prepare","commit","settle","finish","adopt","resolve","expire"}	TRUE	TRUE	FALSE	none	Atomic,TruthfulReply,Resolvable	holds	the same, with resolvers that wait for the coordinator
+lost-3keys	3	FALSE	{"prepare","commit","settle"}	FALSE	FALSE	FALSE	none	Atomic,TruthfulReply,Resolvable	holds	three keys, coordinator writes land and report errors
+no-failures-Cleanup	2	FALSE	{}	FALSE	TRUE	TRUE	none	Cleanup	holds	no failures, updates can return nil
+no-failures-3keys-Cleanup	3	FALSE	{}	FALSE	TRUE	TRUE	none	Cleanup	holds	three keys, no failures
+mutant-rollback-on-unknown-Atomic	2	TRUE	{"commit"}	FALSE	FALSE	FALSE	rollback-on-unknown	Atomic	breaks	ISSUES.md 2: txphase2 rolling back when commitasync cannot confirm the commit
+mutant-rollback-on-unknown-TruthfulReply	2	TRUE	{"commit"}	FALSE	FALSE	FALSE	rollback-on-unknown	TruthfulReply	breaks	ISSUES.md 2 and 9
+mutant-missing-record-is-pending-Resolvable	2	FALSE	{"prepare"}	FALSE	FALSE	FALSE	missing-record-is-pending	Resolvable	breaks	ISSUES.md 8: resolveasync answering "pending" for a missing record
+mutant-adopt-only-cleared-Cleanup	2	FALSE	{}	FALSE	TRUE	FALSE	adopt-only-cleared	Cleanup	breaks	ISSUES.md 5: adopting only the keys whose marker the call cleared
+mutant-count-adoptions-Atomic	2	FALSE	{"adopt"}	FALSE	FALSE	FALSE	count-adoptions	Atomic	breaks	ISSUES.md 3: the adoption counter from before 745c3cd
+mutant-commit-ignores-status-Atomic	2	FALSE	{}	FALSE	FALSE	TRUE	commit-ignores-status	Atomic	breaks	commitasync without its `status == "pending"` check
+mutant-commit-ignores-status-TruthfulReply	2	FALSE	{}	FALSE	FALSE	TRUE	commit-ignores-status	TruthfulReply	breaks	commitasync without its `status == "pending"` check
