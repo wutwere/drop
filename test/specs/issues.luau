@@ -617,4 +617,82 @@ return function(ctx)
 		CHECK(os.clock() - started >= 0.1)
 		CHECK(drop.viewasync(store, "jack").coins == 1)
 	end)
+
+	--- Calls `stop` while the autosave of one update is in flight, then fails
+	--- both attempts of that save. Returns the store and whether `stop`
+	--- returned within two seconds.
+	local function stopduringfailedsave(name: string, stop: (store: any) -> ()): (any, boolean)
+		local service = mock.new()
+		local store = drop.store {
+			name = name,
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.02,
+		}
+
+		drop.startsession(store, "jack")
+		drop.waitforsession(store, "jack")
+
+		local saving = false
+		local stopping = false
+		local failures = 0
+		mock.hook(service, "UpdateAsync", function(info)
+			if info.store == name and info.stage == "before" and failures < 2 then
+				saving = true
+				while not stopping do
+					task.wait()
+				end
+				failures += 1
+				error("simulated outage", 0)
+			end
+		end)
+
+		drop.update(store, "jack", function(data)
+			return { coins = data.coins + 1 }
+		end)
+		assert(
+			within(1, function()
+				return saving
+			end),
+			"the autosave never started"
+		)
+
+		local stopped = false
+		task.spawn(function()
+			stop(store)
+			stopped = true
+		end)
+		stopping = true
+
+		return store, within(2, function()
+			return stopped
+		end)
+	end
+
+	local function checkstoppedsession(store: any, returned: boolean)
+		CASE("the stop returns once the update is saved")
+		CHECK(returned)
+		CHECK(drop.viewasync(store, "jack").coins == 1)
+
+		CASE("the key can start a new session")
+		local started = within(1, function()
+			return (pcall(drop.startsession, store, "jack"))
+		end)
+		CHECK(started)
+		if started then
+			drop.waitforsession(store, "jack")
+			CHECK(drop.view(store, "jack").coins == 1)
+			drop.stopsessionasync(store, "jack")
+		end
+	end
+
+	TEST("stopsessionasync during a save that fails keeps the save's updates", function()
+		checkstoppedsession(stopduringfailedsave("stop-failed-save", function(store)
+			drop.stopsessionasync(store, "jack")
+		end))
+	end)
+
+	TEST("closeasync during a save that fails keeps the save's updates", function()
+		checkstoppedsession(stopduringfailedsave("close-failed-save", drop.closeasync))
+	end)
 end
