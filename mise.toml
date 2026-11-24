@@ -7,3 +7,4 @@
 "github:UpliftGames/wally" = "latest"
 "github:JohnnyMorganz/wally-package-types" = "latest"
 "github:Roblox/rocale-cli" = "latest"
+java = "temurin-21"

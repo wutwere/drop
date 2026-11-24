@@ -38,6 +38,8 @@ type MockService = {
 	_hooks: { [string]: { (any) -> () } },
 	_queuedhooks: { [string]: { (any) -> () } },
 	_latency: { [string]: number },
+	_budget: number,
+	GetRequestBudgetForRequestType: (self: MockService) -> number,
 	GetDataStore: (self: MockService, name: string) -> MockDataStore,
 }
 
@@ -393,6 +395,10 @@ local function new(): MockService
 			RemoveAsync = {},
 		},
 		_latency = {},
+		_budget = math.huge,
+		GetRequestBudgetForRequestType = function(self): number
+			return self._budget
+		end,
 		GetDataStore = function(self, name: string): MockDataStore
 			local store = self._stores[name]
 			if store == nil then
@@ -445,6 +451,9 @@ return table.freeze {
 		seconds: number
 	)
 		service._latency[method] = seconds
+	end,
+	setbudget = function(service: MockService, budget: number)
+		service._budget = budget
 	end,
 	setupdatedtime = function(service: MockService, storename: string, key: string, updatedtime: number)
 		local cachekey = `{storename}/{key}`

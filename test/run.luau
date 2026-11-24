@@ -8,6 +8,7 @@ local specs = {
 	require(script.Parent.specs.sessions),
 	require(script.Parent.specs.hardening),
 	require(script.Parent.specs.transactions),
+	require(script.Parent.specs.issues),
 }
 
 return function()
