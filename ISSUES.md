@@ -1,6 +1,6 @@
 # Known issues
 
-These issues came out of comparing drop with [Ledger](https://github.com/XoifaiI/Ledger) and [dataforge](https://github.com/PepeElToro41/dataforge). Ledger's docs describe 1–3 for upstream drop. Issues 8 and 9 came out of the TLA+ model that `bin/verify` checks, and issue 10 came up in review of those fixes. Line numbers under "Where" refer to b4d43cb, before the fixes, and for issue 10 to 9c09fc5.
+These issues came out of comparing drop with [Ledger](https://github.com/XoifaiI/Ledger) and [dataforge](https://github.com/PepeElToro41/dataforge). Ledger's docs describe 1–3 for upstream drop. Issues 8 and 9 came out of the TLA+ model that `bin/verify` checks, and issues 10 to 12 came up in review of those fixes. Line numbers under "Where" refer to b4d43cb, before the fixes, for issue 10 to 9c09fc5, and for issues 11 and 12 to 9e6d4ce.
 
 Many of these depend on the same Roblox behavior: **an `UpdateAsync` can error even though its write landed.** It's rare, but it tends to happen in bursts when the datastore service is struggling, and drop treats every error as "didn't happen".
 
@@ -16,8 +16,10 @@ Many of these depend on the same Roblox behavior: **an `UpdateAsync` can error e
 | 8 | A prepare retried after the abort wedges a key permanently | High | **Fixed** |
 | 9 | `txasync` errors for a transaction that other servers committed | High | **Fixed** |
 | 10 | A session stopped during a save that fails loses the save's updates | High | **Fixed** |
+| 11 | A stop returns while the stopped session's loop is still saving | High | **Fixed** |
+| 12 | A `drop.callbacks` function that errors ends a session loop or leaves a key locked | Medium | **Fixed** |
 
-Every fix has a regression test in `test/specs/issues.luau`. Each test failed on b4d43cb, or on 9c09fc5 for issue 10, and passes now.
+Every fix has a regression test in `test/specs/issues.luau`. Each test failed on b4d43cb, on 9c09fc5 for issue 10, or on 9e6d4ce for issues 11 and 12, and passes now.
 
 `bin/verify` model-checks the transaction protocol (issues 2, 3, 5, 8, 9). The old behaviour of each is kept in the model as a `mutant-` row in `verify/checks.tsv`, which must break its rule on every run. See `.claude/skills/verify-tx/SKILL.md`.
 
@@ -28,7 +30,7 @@ Every fix has a regression test in `test/specs/issues.luau`. Each test failed on
 - **Servers on an older version drop the `writes` field** when they save a record, so writes are only applied once after every server runs this version.
 - **`drop.txasync` can raise "outcome unknown".** The caller must not retry or refund on that error. See the README.
 - **A commit that cannot be confirmed blocks its keys for up to 60 seconds.** The keys stay prepared until a resolver aborts the stale record, and sessions on them cannot save meanwhile. Before, they were rolled back at once, which was the bug in issue 2.
-- **A throwing callback can still kill a session loop or leak a key's lock.** `drop.callbacks` functions run unprotected.
+- **A `drop.callbacks` function that yields holds up the call that reported to it.** That call can hold a key's lock, so a callback that calls `drop.stopsessionasync` or `drop.updateasync` for the same key never returns.
 - **Tx records still leak when datastore calls fail** at the wrong moment, for example when an adoption fails on both attempts.
 - **The README's receipt example needs `PurchaseId`s in the data.** drop cannot know that two `ProcessReceipt` calls are the same purchase.
 
@@ -181,3 +183,30 @@ A session save moves the key's queue into `store.lock[key]` while its `UpdateAsy
 - **`closeasync` waited on that queue** until the server shut down.
 
 b4d43cb has the same bug. The retry delay from issue 7 makes a failing save take longer, so a stop is more likely to land during one.
+
+## 11. A stop returns while the stopped session's loop is still saving
+
+**Status:** fixed. `stopsessionasync` returns only when no write of the key is in flight and the queue is empty at the same moment. It waits for the key's lock before every look at the queue, not only the first. Test: "stopsessionasync waits for a save that the stopped session's loop starts".
+
+**Where:** `src/store.luau:869-878` (`stopsessionasync`) and `src/store.luau:402` (`flushasync`).
+
+This is issue 10 with the save started after the stop. A session loop that is already waiting for the key's lock inside `flushasync` does not check that its session still runs when the lock frees, so it can take the queue after the stop.
+
+**How it happened:**
+1. A `drop.updateasync` holds the key's lock. The session loop has an update queued and waits for the lock.
+2. The `drop.updateasync` returns and the same thread calls `stopsessionasync`. Its save takes the queue, fails, and puts the queue back. The stop waits 0.15 to 0.25 seconds before it tries again.
+3. The session loop takes the queue and starts its own save.
+4. The stop wakes, finds no queue and returns.
+5. The loop's save fails and puts the queue back. Nothing saves it.
+
+The symptoms are those of issue 10: the updates are lost, the key refuses a new session with "still stopping", and `closeasync` waits until the server shuts down.
+
+## 12. A `drop.callbacks` function that errors ends a session loop or leaves a key locked
+
+**Status:** fixed. drop calls every `drop.callbacks` function through `src/report.luau`, which catches an error and warns about it. Tests: "an apierror callback that errors does not leave the key locked" and "an updatedropped callback that errors does not end the session's saves".
+
+**Where:** `src/rbxapi.luau:35` (`apierror`), and `src/store.luau:130`, `459` and `481`.
+
+The callbacks ran unprotected, so an error in one went up through drop's own code:
+- **`apierror`** runs between the two attempts of a datastore call, while `drop.updateasync`, a session save or a transaction holds the key's lock. The error skipped the retry and the release. Every later write of the key on that server then waited forever, and since issue 10's fix so did `stopsessionasync`.
+- **`updatedropped`, `externerror` and `migrationerror`** can run in the session loop, after a save or during a load. The error ended the loop while the session still looked active, so its later updates were never saved. Inside a datastore write, the same error only failed that write.

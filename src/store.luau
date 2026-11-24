@@ -1,6 +1,6 @@
 local MockDataStoreService = require("./mockdatastoreservice")
-local callbacks = require("./callbacks")
 local rbxapi = require("./rbxapi")
+local report = require("./report")
 local schema = require("./schema")
 local tx = require("./tx")
 local utils = require("./utils")
@@ -127,7 +127,7 @@ local function migraterecord<T>(store: Store<T>, key: string, record: Record): (
 		local success, result = utils.externcall(migration, data)
 
 		if not success then
-			callbacks.migrationerror {
+			report.migrationerror {
 				migration = migration,
 				store = store.source.Name,
 				key = key,
@@ -438,7 +438,7 @@ local function flushasync<T>(store: Store<T>, key: string): (Record?, Failure?)
 		local first = applyqueue(record.data, queue, applied, dropped)
 		local second = applyqueue(record.data, queue, applied)
 		if not utils.deepequal(first, second) then
-			callbacks.externerror(`nondeterministic session flush for store "{store.source.Name}" key "{key}"`)
+			report.externerror(`nondeterministic session flush for store "{store.source.Name}" key "{key}"`)
 		end
 
 		record.data = first
@@ -456,7 +456,7 @@ local function flushasync<T>(store: Store<T>, key: string): (Record?, Failure?)
 	record = record or current
 
 	if success and failure then
-		callbacks.externerror(
+		report.externerror(
 			`discarded {#queue} unsaved session updates for store "{store.source.Name}" key "{key}": {FAILURE_MESSAGES[failure]}`
 		)
 		return nil, failure
@@ -478,7 +478,7 @@ local function flushasync<T>(store: Store<T>, key: string): (Record?, Failure?)
 	end
 
 	for _, update in dropped do
-		callbacks.updatedropped {
+		report.updatedropped {
 			store = store.source.Name,
 			key = key,
 			update = update.fn,
@@ -498,7 +498,7 @@ local function failsession<T>(store: Store<T>, key: string, failure: Failure)
 	store.session.queue[key] = nil
 	resumewaiters(store, key)
 
-	callbacks.externerror(`session stopped for store "{store.source.Name}" key "{key}": {FAILURE_MESSAGES[failure]}`)
+	report.externerror(`session stopped for store "{store.source.Name}" key "{key}": {FAILURE_MESSAGES[failure]}`)
 end
 
 --- Whether the server is too short on read requests for an idle load.
@@ -849,12 +849,13 @@ end
 
 --- Stops real-time sync for a given key.
 ---
---- Returns once the session's updates are saved. A save that is in flight
---- when this is called puts its updates back in the queue if it fails, so
---- this waits for it before looking at the queue. Retries saving queued
---- updates until it succeeds, waiting longer after each failure (doubling from
---- 0.2s up to 5s, with jitter) so a throttled or failing datastore is not
---- hammered.
+--- Returns once the session's updates are saved. A save puts its updates back
+--- in the queue if it fails, and the stopped session's loop can still start
+--- one, so this only returns when no write of the key is in flight and the
+--- queue is empty, or when a new session owns the key. Retries saving queued
+--- updates until it succeeds, waiting longer after each failure (doubling
+--- from 0.2s up to 5s, with jitter) so a throttled or failing datastore is
+--- not hammered.
 local function stopsessionasync<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
 		error(`sync not started for key "{key}"`)
@@ -866,10 +867,13 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 	resumewaiters(store, key)
 	store.session.cache[key] = nil
 
-	acquirelockasync(store, key)
-
 	local delay = STOP_RETRY_MIN
-	while store.session.owner[key] == nil and store.session.queue[key] do
+	while true do
+		acquirelockasync(store, key)
+		if store.session.owner[key] ~= nil or store.session.queue[key] == nil then
+			return
+		end
+
 		flushasync(store, key)
 		if store.session.owner[key] == nil and store.session.queue[key] then
 			task.wait(delay * (0.75 + math.random() * 0.5))
@@ -886,7 +890,7 @@ local function closeasync<T>(store: Store<T>)
 				stopsessionasync(store, key)
 			end)
 			if not success then
-				callbacks.externerror(tostring(err))
+				report.externerror(tostring(err))
 			end
 		end)
 	end

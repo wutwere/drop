@@ -1,4 +1,4 @@
-local callbacks = require("./callbacks")
+local report = require("./report")
 
 local DataStoreService = game:GetService("DataStoreService")
 
@@ -32,7 +32,7 @@ local function attempt(op: Op, datastore: DataStore, key: string, fn: () -> ...a
 			return table.unpack(results, 1, results.n)
 		end
 
-		callbacks.apierror {
+		report.apierror {
 			msg = results[2],
 			op = op,
 			datastore = datastore,
