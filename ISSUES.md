@@ -21,6 +21,8 @@ Many of these depend on the same Roblox behavior: **an `UpdateAsync` can error e
 
 Every fix has a regression test in `test/specs/issues.luau`. Each test failed on b4d43cb, on 9c09fc5 for issue 10, or on 9e6d4ce for issues 11 and 12, and passes now.
 
+`test/specs/schedules.luau` runs random schedules of session calls on two servers against a mock datastore that is slow and fails in bursts. It fails on the code from before the fixes for issues 10 and 11, and on a session save that ignores its sequence number.
+
 `bin/verify` model-checks the transaction protocol (issues 2, 3, 5, 8, 9). The old behaviour of each is kept in the model as a `mutant-` row in `verify/checks.tsv`, which must break its rule on every run. See `.claude/skills/verify-tx/SKILL.md`.
 
 ## What is still open
