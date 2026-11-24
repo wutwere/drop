@@ -1,6 +1,6 @@
 # Known issues
 
-These issues came out of comparing drop with [Ledger](https://github.com/XoifaiI/Ledger) and [dataforge](https://github.com/PepeElToro41/dataforge). Ledger's docs describe 1–3 for upstream drop. Issues 8 and 9 came out of the TLA+ model that `bin/verify` checks. Line numbers under "Where" refer to b4d43cb, before the fixes.
+These issues came out of comparing drop with [Ledger](https://github.com/XoifaiI/Ledger) and [dataforge](https://github.com/PepeElToro41/dataforge). Ledger's docs describe 1–3 for upstream drop. Issues 8 and 9 came out of the TLA+ model that `bin/verify` checks, and issue 10 came up in review of those fixes. Line numbers under "Where" refer to b4d43cb, before the fixes, and for issue 10 to 9c09fc5.
 
 Many of these depend on the same Roblox behavior: **an `UpdateAsync` can error even though its write landed.** It's rare, but it tends to happen in bursts when the datastore service is struggling, and drop treats every error as "didn't happen".
 
@@ -15,8 +15,9 @@ Many of these depend on the same Roblox behavior: **an `UpdateAsync` can error e
 | 7 | Smaller gaps | Low | **Fixed** |
 | 8 | A prepare retried after the abort wedges a key permanently | High | **Fixed** |
 | 9 | `txasync` errors for a transaction that other servers committed | High | **Fixed** |
+| 10 | A session stopped during a save that fails loses the save's updates | High | **Fixed** |
 
-Every fix has a regression test in `test/specs/issues.luau`. Each test failed on b4d43cb and passes now.
+Every fix has a regression test in `test/specs/issues.luau`. Each test failed on b4d43cb, or on 9c09fc5 for issue 10, and passes now.
 
 `bin/verify` model-checks the transaction protocol (issues 2, 3, 5, 8, 9). The old behaviour of each is kept in the model as a `mutant-` row in `verify/checks.tsv`, which must break its rule on every run. See `.claude/skills/verify-tx/SKILL.md`.
 
@@ -167,3 +168,16 @@ The cost: if a tx record is deleted by hand while a committed transaction still 
 **Where:** `commitasync` in `src/tx.luau`.
 
 This is issue 2 without any failed call. If the commit write lands but errors, other servers can resolve every key as committed, adopt them, and remove the tx record before the retry runs. The retry found no record, the read-back found none either, and `commitasync` returned `"aborted"`. Every key held the transaction's update while `drop.txasync` reported a failure.
+
+## 10. A session stopped during a save that fails loses the save's updates
+
+**Status:** fixed. `stopsessionasync` waits for a write of the key that is in flight before it looks at the queue, and returns once the session's updates are saved. `closeasync` stops each session through it. Tests: "stopsessionasync during a save that fails keeps the save's updates" and "closeasync during a save that fails keeps the save's updates".
+
+**Where:** `src/store.luau:867` (`stopsessionasync`).
+
+A session save moves the key's queue into `store.lock[key]` while its `UpdateAsync` runs, and puts it back in the queue if both attempts fail. `stopsessionasync` only saved `store.session.queue[key]`, so with nothing else queued it returned at once. When the save in flight then failed:
+- **Its updates were lost.** The session loop that would have saved them again had ended.
+- **The key refused a new session on that server,** with "still stopping", because its queue was never emptied.
+- **`closeasync` waited on that queue** until the server shut down.
+
+b4d43cb has the same bug. The retry delay from issue 7 makes a failing save take longer, so a stop is more likely to land during one.

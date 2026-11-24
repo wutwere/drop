@@ -849,9 +849,12 @@ end
 
 --- Stops real-time sync for a given key.
 ---
---- Retries saving queued updates until it succeeds, waiting longer after each
---- failure (doubling from 0.2s up to 5s, with jitter) so a throttled or
---- failing datastore is not hammered.
+--- Returns once the session's updates are saved. A save that is in flight
+--- when this is called puts its updates back in the queue if it fails, so
+--- this waits for it before looking at the queue. Retries saving queued
+--- updates until it succeeds, waiting longer after each failure (doubling from
+--- 0.2s up to 5s, with jitter) so a throttled or failing datastore is not
+--- hammered.
 local function stopsessionasync<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
 		error(`sync not started for key "{key}"`)
@@ -862,6 +865,8 @@ local function stopsessionasync<T>(store: Store<T>, key: string)
 	store.session.loop[key] = nil
 	resumewaiters(store, key)
 	store.session.cache[key] = nil
+
+	acquirelockasync(store, key)
 
 	local delay = STOP_RETRY_MIN
 	while store.session.owner[key] == nil and store.session.queue[key] do
