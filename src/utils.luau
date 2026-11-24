@@ -1,4 +1,4 @@
-local callbacks = require("./callbacks")
+local report = require("./report")
 
 local function deepfreeze<T>(tbl: T): T
 	if table.isfrozen(tbl) then
@@ -18,7 +18,7 @@ local function externcall<Arg, Ret>(fn: (Arg) -> Ret, arg: Arg): (boolean, Ret)
 	return xpcall(function(): Ret
 		return fn(arg)
 	end, function(err)
-		callbacks.externerror(err)
+		report.externerror(err)
 		return err
 	end, fn, arg)
 end
