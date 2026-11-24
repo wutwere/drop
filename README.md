@@ -86,7 +86,7 @@ drop.waitforsession(store, "jack")
 > [!NOTE]
 > `drop.waitforsession` errors if the session cannot start: the key's data was saved by a newer version of your schema, or a migration errored on it. A session that runs into either later stops and discards its unsaved updates. Both are reported through `drop.callbacks.externerror`. `drop.stopsessionasync` errors for a session that already ended this way, so check `drop.issessionactive` first.
 
-To stop a key's session, such as when its player leaves, call `drop.stopsessionasync`. It yields until the session's updates are saved, including those of a save that was already in flight, and retries a failing save until it succeeds.
+To stop a key's session, such as when its player leaves, call `drop.stopsessionasync`. It yields until the session's updates are saved, including those of a save that was already in flight, and retries a save that fails. Updates that this server can never save are discarded instead, and reported through `drop.callbacks.externerror`: the data was saved by a newer version of your schema, a migration errored on it, or it is over the size limit.
 
 ```luau
 drop.stopsessionasync(store, "jack")
