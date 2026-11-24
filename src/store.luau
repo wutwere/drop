@@ -852,9 +852,10 @@ end
 --- Returns once the session's updates are saved. A save puts its updates back
 --- in the queue if it fails, and the stopped session's loop can still start
 --- one, so this only returns when no write of the key is in flight and the
---- queue is empty. Retries saving queued updates until it succeeds, waiting
---- longer after each failure (doubling from 0.2s up to 5s, with jitter) so a
---- throttled or failing datastore is not hammered.
+--- queue is empty, or when a new session owns the key. Retries saving queued
+--- updates until it succeeds, waiting longer after each failure (doubling
+--- from 0.2s up to 5s, with jitter) so a throttled or failing datastore is
+--- not hammered.
 local function stopsessionasync<T>(store: Store<T>, key: string)
 	if not store.session.state[key] then
 		error(`sync not started for key "{key}"`)

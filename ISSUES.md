@@ -205,8 +205,8 @@ The symptoms are those of issue 10: the updates are lost, the key refuses a new 
 
 **Status:** fixed. drop calls every `drop.callbacks` function through `src/report.luau`, which catches an error and warns about it. Tests: "an apierror callback that errors does not leave the key locked" and "an updatedropped callback that errors does not end the session's saves".
 
-**Where:** `src/rbxapi.luau:35` (`apierror`), and `src/store.luau:130`, `459`, `481` and `501`.
+**Where:** `src/rbxapi.luau:35` (`apierror`), and `src/store.luau:130`, `459` and `481`.
 
 The callbacks ran unprotected, so an error in one went up through drop's own code:
 - **`apierror`** runs between the two attempts of a datastore call, while `drop.updateasync`, a session save or a transaction holds the key's lock. The error skipped the retry and the release. Every later write of the key on that server then waited forever, and since issue 10's fix so did `stopsessionasync`.
-- **`updatedropped`, `externerror` and `migrationerror`** run inside the session loop. The error ended the loop while the session still looked active, so its later updates were never saved.
+- **`updatedropped`, `externerror` and `migrationerror`** can run in the session loop, after a save or during a load. The error ended the loop while the session still looked active, so its later updates were never saved. Inside a datastore write, the same error only failed that write.
