@@ -669,10 +669,11 @@ return function(ctx)
 		end)
 	end
 
-	local function checkstoppedsession(store: any, returned: boolean)
+	local function checkstoppedsession(store: any, returned: boolean, coins: number?)
+		local coins = coins or 1
 		CASE("the stop returns once the update is saved")
 		CHECK(returned)
-		CHECK(drop.viewasync(store, "jack").coins == 1)
+		CHECK(drop.viewasync(store, "jack").coins == coins)
 
 		CASE("the key can start a new session")
 		local started = within(1, function()
@@ -681,7 +682,7 @@ return function(ctx)
 		CHECK(started)
 		if started then
 			drop.waitforsession(store, "jack")
-			CHECK(drop.view(store, "jack").coins == 1)
+			CHECK(drop.view(store, "jack").coins == coins)
 			drop.stopsessionasync(store, "jack")
 		end
 	end
@@ -694,5 +695,157 @@ return function(ctx)
 
 	TEST("closeasync during a save that fails keeps the save's updates", function()
 		checkstoppedsession(stopduringfailedsave("close-failed-save", drop.closeasync))
+	end)
+
+	TEST("stopsessionasync waits for a save that the stopped session's loop starts", function()
+		local name = "stop-loop-save"
+		local service = mock.new()
+		local store = drop.store {
+			name = name,
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.02,
+		}
+
+		drop.startsession(store, "jack")
+		drop.waitforsession(store, "jack")
+
+		-- Call 1 is the direct write, which holds the key while the session
+		-- loop starts to wait for it. Calls 2 and 3 are the stop's save.
+		-- Calls 4 and 5 are the save of the session loop, which outlasts
+		-- the stop's wait before its next attempt.
+		local calls = 0
+		local waiting = false
+		mock.hook(service, "UpdateAsync", function(info)
+			if info.store ~= name or info.stage ~= "before" then
+				return
+			end
+
+			calls += 1
+			if calls == 1 then
+				while not waiting do
+					task.wait()
+				end
+			elseif calls == 4 then
+				task.wait(0.5)
+			end
+
+			if calls >= 2 and calls <= 5 then
+				error("simulated outage", 0)
+			end
+		end)
+
+		local function earn(data)
+			return { coins = data.coins + 1 }
+		end
+
+		local stopped = false
+		task.spawn(function()
+			drop.updateasync(store, "jack", earn)
+			drop.stopsessionasync(store, "jack")
+			stopped = true
+		end)
+		drop.update(store, "jack", earn)
+		task.wait(0.2)
+		waiting = true
+
+		checkstoppedsession(
+			store,
+			within(3, function()
+				return stopped
+			end),
+			2
+		)
+	end)
+
+	TEST("an apierror callback that errors does not leave the key locked", function()
+		local name = "throwing-apierror"
+		local service = mock.new()
+		local store = drop.store {
+			name = name,
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+		}
+
+		local failed = false
+		mock.hook(service, "UpdateAsync", function(info)
+			if info.store == name and info.stage == "before" and not failed then
+				failed = true
+				error("simulated outage", 0)
+			end
+		end)
+
+		local function earn(data)
+			return { coins = data.coins + 1 }
+		end
+
+		local apierror = drop.callbacks.apierror
+		drop.callbacks.apierror = function()
+			error("the callback errored", 0)
+		end
+		local retried = pcall(drop.updateasync, store, "jack", earn)
+		drop.callbacks.apierror = apierror
+
+		CASE("the failed call is still retried")
+		CHECK(retried)
+
+		CASE("the key can be written again")
+		CHECK(finishes(1, function()
+			drop.updateasync(store, "jack", earn)
+		end))
+		CHECK(drop.viewasync(store, "jack").coins == 2)
+	end)
+
+	TEST("an updatedropped callback that errors does not end the session's saves", function()
+		local service = mock.new()
+		local opts = {
+			name = "throwing-updatedropped",
+			schema = drop.schema { coins = 0 },
+			datastoreservice = service,
+			sessiontime = 0.02,
+		}
+		local store = drop.store(opts)
+		local other = drop.store(opts)
+
+		drop.updateasync(other, "jack", function()
+			return { coins = 5 }
+		end)
+		drop.startsession(store, "jack")
+		drop.waitforsession(store, "jack")
+
+		local reported = false
+		local updatedropped = drop.callbacks.updatedropped
+		drop.callbacks.updatedropped = function()
+			reported = true
+			error("the callback errored", 0)
+		end
+
+		local function spend(data)
+			if data.coins < 5 then
+				return nil
+			end
+			return { coins = data.coins - 5 }
+		end
+
+		drop.update(store, "jack", spend)
+		drop.updateasync(other, "jack", spend)
+		local dropped = within(1, function()
+			return reported
+		end)
+		drop.callbacks.updatedropped = updatedropped
+		assert(dropped, "the spend was never dropped")
+
+		drop.update(store, "jack", function(data)
+			return { coins = data.coins + 1 }
+		end)
+
+		CASE("a later update is saved")
+		CHECK(within(1, function()
+			return drop.viewasync(other, "jack").coins == 1
+		end))
+
+		finishes(1, function()
+			drop.stopsessionasync(store, "jack")
+		end)
 	end)
 end
